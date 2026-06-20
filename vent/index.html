@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Vent or Seal">
+  <meta name="theme-color" content="#0B0F14">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <title>Vent or Seal?</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #0B0F14;
+      --surface: #141A22;
+      --border:  #263040;
+      --text:    #D8E4F0;
+      --muted:   #607080;
+      --accent:  #4A9ECC;
+      --green:   #3CC470;
+      --yellow:  #D4A017;
+      --red:     #E05050;
+      --mono: ui-monospace, 'SF Mono', 'Fira Code', monospace;
+      --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    }
+
+    html, body {
+      min-height: 100dvh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .app {
+      max-width: 400px;
+      margin: 0 auto;
+      padding: 16px 16px 48px;
+    }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      padding-top: 16px;
+      margin-bottom: 22px;
+    }
+    .eyebrow { font-size: 10px; color: var(--accent); letter-spacing: .18em; text-transform: uppercase; margin-bottom: 4px; }
+    .title   { font-size: 24px; font-weight: 700; letter-spacing: -.03em; }
+    .clear-btn {
+      background: transparent; border: 1px solid var(--border);
+      color: var(--muted); border-radius: 6px; padding: 5px 12px;
+      font-size: 11px; font-family: var(--sans); cursor: pointer;
+    }
+
+    /* ── Cards ── */
+    .section {
+      background: var(--surface); border-radius: 12px;
+      padding: 16px; border: 1px solid var(--border); margin-bottom: 10px;
+    }
+    .section-header {
+      display: flex; justify-content: space-between;
+      align-items: center; margin-bottom: 14px; min-height: 28px;
+    }
+    .section-label { font-size: 10px; color: var(--accent); letter-spacing: .15em; text-transform: uppercase; font-weight: 600; }
+
+    /* ── Location setup ── */
+    .loc-row { display: flex; gap: 6px; align-items: center; }
+    .loc-input {
+      background: var(--bg); border: 1px solid var(--border);
+      color: var(--text); border-radius: 6px; padding: 5px 10px;
+      font-size: 12px; font-family: var(--sans); outline: none; width: 150px;
+      transition: border-color .15s;
+    }
+    .loc-input:focus  { border-color: var(--accent); }
+    .loc-input::placeholder { color: var(--muted); font-size: 11px; }
+    .loc-input.error  { border-color: var(--red); }
+    .set-btn {
+      background: transparent; border: 1px solid var(--accent);
+      color: var(--accent); border-radius: 6px; padding: 5px 11px;
+      font-size: 11px; font-weight: 700; letter-spacing: .05em;
+      font-family: var(--sans); cursor: pointer; white-space: nowrap;
+    }
+    .set-btn:disabled { opacity: .4; cursor: default; }
+    .change-link {
+      font-size: 10px; color: var(--muted); cursor: pointer;
+      text-align: right; margin-top: 6px; letter-spacing: .04em;
+      display: none;
+    }
+    .change-link:hover { color: var(--accent); }
+
+    /* ── Fetch button ── */
+    .fetch-btn {
+      background: var(--accent); color: #0B0F14;
+      border: 1px solid var(--accent); border-radius: 6px;
+      padding: 5px 13px; font-size: 11px; font-weight: 700;
+      font-family: var(--sans); letter-spacing: .06em;
+      text-transform: uppercase; cursor: pointer;
+    }
+    .fetch-btn:disabled { opacity: .45; cursor: default; }
+
+    /* ── Inputs ── */
+    .inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 4px; }
+    .input-group label {
+      display: block; font-size: 10px; color: var(--muted);
+      letter-spacing: .12em; text-transform: uppercase; font-weight: 600; margin-bottom: 5px;
+    }
+    .input-wrap {
+      display: flex; align-items: center; background: var(--bg);
+      border: 1px solid var(--border); border-radius: 7px;
+      overflow: hidden; transition: border-color .15s;
+    }
+    .input-wrap:focus-within { border-color: var(--accent); }
+    .input-wrap input {
+      background: transparent; border: none; outline: none;
+      color: var(--text); font-size: 18px; padding: 10px 10px;
+      width: 100%; font-family: var(--mono); font-weight: 500;
+    }
+    .input-wrap input::placeholder { color: var(--border); }
+    .unit { color: var(--muted); font-size: 12px; padding-right: 10px; font-family: var(--mono); flex-shrink: 0; }
+
+    /* ── DP Readout ── */
+    .dp-readout { text-align: center; padding: 10px 0 4px; }
+    .dp-number {
+      font-size: 46px; font-weight: 800; line-height: 1;
+      font-family: var(--mono); letter-spacing: -.03em;
+      color: var(--border); transition: color .2s;
+    }
+    .dp-number.live { color: var(--text); }
+    .dp-suffix { font-size: 18px; color: var(--muted); display: none; }
+    .dp-tag { font-size: 10px; color: var(--muted); letter-spacing: .1em; text-transform: uppercase; margin-top: 2px; }
+
+    /* ── Verdict ── */
+    .verdict { border-radius: 12px; padding: 22px 20px; border: 1px solid var(--border); text-align: center; transition: border-color .2s, background .2s; }
+    .verdict-placeholder { color: var(--muted); font-size: 13px; line-height: 1.6; }
+    .verdict-placeholder .accent { color: var(--accent); }
+    .verdict-label { font-size: 32px; font-weight: 800; letter-spacing: -.03em; margin-bottom: 8px; line-height: 1; }
+    .verdict-sub   { font-size: 13px; color: var(--muted); line-height: 1.5; max-width: 280px; margin: 0 auto; }
+    .verdict-compare { display: flex; justify-content: center; gap: 24px; margin-top: 16px; }
+    .compare-item  { text-align: center; }
+    .compare-label { font-size: 10px; color: var(--muted); letter-spacing: .1em; text-transform: uppercase; margin-bottom: 2px; }
+    .compare-value { font-size: 18px; font-weight: 700; font-family: var(--mono); }
+    .compare-vs    { color: var(--border); font-size: 18px; align-self: center; }
+
+    .footer-note { margin-top: 14px; font-size: 10px; color: var(--border); text-align: center; letter-spacing: .05em; }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <div class="header">
+    <div>
+      <div class="eyebrow">Moisture Monitor</div>
+      <div class="title">Vent or Seal?</div>
+    </div>
+    <button class="clear-btn" onclick="clearReadings()">Clear</button>
+  </div>
+
+  <!-- OUTDOOR — top -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-label" id="out-lbl">Outdoor</span>
+      <div id="header-right"></div>
+    </div>
+    <div id="change-row" class="change-link" onclick="changeLocation()">⌀ change location</div>
+    <div class="inputs">
+      <div class="input-group">
+        <label>Temp</label>
+        <div class="input-wrap">
+          <input type="text" inputmode="numeric" id="out-temp" placeholder="72" maxlength="4" autocomplete="off">
+          <span class="unit">°F</span>
+        </div>
+      </div>
+      <div class="input-group">
+        <label>Humidity</label>
+        <div class="input-wrap">
+          <input type="text" inputmode="numeric" id="out-rh" placeholder="55" maxlength="3" autocomplete="off">
+          <span class="unit">%</span>
+        </div>
+      </div>
+    </div>
+    <div class="dp-readout">
+      <div><span class="dp-number" id="out-dp">—</span><span class="dp-suffix" id="out-sfx">°F</span></div>
+      <div class="dp-tag">dew point</div>
+    </div>
+  </div>
+
+  <!-- INDOOR — bottom -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-label">Indoor</span>
+    </div>
+    <div class="inputs">
+      <div class="input-group">
+        <label>Temp</label>
+        <div class="input-wrap">
+          <input type="text" inputmode="numeric" id="in-temp" placeholder="69" maxlength="4" autocomplete="off">
+          <span class="unit">°F</span>
+        </div>
+      </div>
+      <div class="input-group">
+        <label>Humidity</label>
+        <div class="input-wrap">
+          <input type="text" inputmode="numeric" id="in-rh" placeholder="56" maxlength="3" autocomplete="off">
+          <span class="unit">%</span>
+        </div>
+      </div>
+    </div>
+    <div class="dp-readout">
+      <div><span class="dp-number" id="in-dp">—</span><span class="dp-suffix" id="in-sfx">°F</span></div>
+      <div class="dp-tag">dew point</div>
+    </div>
+  </div>
+
+  <!-- VERDICT -->
+  <div class="verdict" id="verdict">
+    <div class="verdict-placeholder" id="verdict-hint">
+      Set your home location above, then enter indoor temp + humidity.
+    </div>
+  </div>
+
+  <div class="footer-note">Vent when outdoor DP &lt; indoor DP</div>
+</div>
+
+<script>
+  const G='#3CC470', Y='#D4A017', R='#E05050', TX='#D8E4F0', BD='#263040', AC='#4A9ECC';
+  const LS_KEY  = 'ventseal_home';   // saved location
+  const LS_LAST = 'ventseal_last';   // last fetched outdoor reading (for offline)
+
+  const $ = id => document.getElementById(id);
+  const fields = {
+    outTemp: $('out-temp'), outRH: $('out-rh'),
+    inTemp:  $('in-temp'), inRH:  $('in-rh')
+  };
+  const pLen = { outTemp:0, outRH:0, inTemp:0, inRH:0 };
+
+  // ── localStorage helpers ──
+  function getSaved() {
+    try { return JSON.parse(localStorage.getItem(LS_KEY)); } catch { return null; }
+  }
+  function setSaved(obj) {
+    try { localStorage.setItem(LS_KEY, JSON.stringify(obj)); } catch {}
+  }
+  function clearSaved() {
+    try { localStorage.removeItem(LS_KEY); } catch {}
+  }
+  function getLast() {
+    try { return JSON.parse(localStorage.getItem(LS_LAST)); } catch { return null; }
+  }
+  function setLast(obj) {
+    try { localStorage.setItem(LS_LAST, JSON.stringify(obj)); } catch {}
+  }
+  function clearLast() {
+    try { localStorage.removeItem(LS_LAST); } catch {}
+  }
+
+  // ── Dew point calc ──
+  function calcDP(f, rh) {
+    const T=(parseFloat(f)-32)*5/9, RH=parseFloat(rh);
+    if (isNaN(T)||isNaN(RH)||RH<=0||RH>100) return null;
+    const g=Math.log(RH/100)+(17.625*T)/(243.04+T);
+    return (243.04*g/(17.625-g))*9/5+32;
+  }
+
+  function done(val, prev) {
+    const digits = val.replace(/-/g,'');
+    if (val.length<=prev) return false;
+    return digits.length===3 || (digits.length===2 && digits[0]!=='1');
+  }
+
+  function jump(el) { if(el){ el.focus(); el.select(); } }
+
+  // ── Render dew point readout ──
+  function setReadout(numId, sfxId, val) {
+    const n=$(numId), s=$(sfxId);
+    if (val!==null) { n.textContent=val.toFixed(1); n.classList.add('live'); s.style.display='inline'; }
+    else            { n.textContent='—'; n.classList.remove('live'); s.style.display='none'; }
+  }
+
+  // ── Verdict ──
+  function render() {
+    const oDP=calcDP(fields.outTemp.value, fields.outRH.value);
+    const iDP=calcDP(fields.inTemp.value,  fields.inRH.value);
+    setReadout('out-dp','out-sfx',oDP);
+    setReadout('in-dp', 'in-sfx', iDP);
+
+    const v=$('verdict');
+    if (oDP===null||iDP===null) {
+      v.style.cssText='border:1px solid '+BD+';background:transparent';
+      const hint = getSaved()
+        ? 'Enter indoor temp + humidity for a reading.'
+        : 'Set your home location above, then enter indoor temp + humidity.';
+      v.innerHTML=`<div class="verdict-placeholder">${hint}</div>`;
+      return;
+    }
+    const d=oDP-iDP;
+    let label,sub,color;
+    if      (d<=-5) { label='Open Up';     sub=`Outdoor is ${Math.abs(d).toFixed(1)}°F drier — actively helps`;  color=G; }
+    else if (d<=0)  { label='OK to Vent';  sub=`Outdoor is ${Math.abs(d).toFixed(1)}°F drier — small gain`;       color=G; }
+    else if (d<=3)  { label='Borderline';  sub='Nearly equal — comfort choice only';                               color=Y; }
+    else            { label='Stay Closed'; sub=`Outdoor is ${d.toFixed(1)}°F wetter — importing moisture`;         color=R; }
+
+    v.style.cssText=`border:1px solid ${color}55;background:${color}12`;
+    v.innerHTML=`
+      <div class="verdict-label" style="color:${color}">${label}</div>
+      <div class="verdict-sub">${sub}</div>
+      <div class="verdict-compare">
+        <div class="compare-item">
+          <div class="compare-label">Out</div>
+          <div class="compare-value" style="color:${oDP>iDP?R:G}">${oDP.toFixed(1)}°</div>
+        </div>
+        <div class="compare-vs">vs</div>
+        <div class="compare-item">
+          <div class="compare-label">In</div>
+          <div class="compare-value" style="color:${TX}">${iDP.toFixed(1)}°</div>
+        </div>
+      </div>`;
+  }
+
+  // ── Header right: setup vs fetch button ──
+  function renderControls() {
+    const loc = getSaved();
+    const hr = $('header-right');
+    const cr = $('change-row');
+
+    if (loc) {
+      $('out-lbl').textContent = `Outdoor · ${loc.name}`;
+      hr.innerHTML = `<button class="fetch-btn" id="fetch-btn" onclick="fetchOutdoor()">Fetch Live</button>`;
+      cr.style.display = 'block';
+    } else {
+      $('out-lbl').textContent = 'Outdoor';
+      hr.innerHTML = `
+        <div class="loc-row">
+          <input class="loc-input" id="loc-input" type="text" placeholder="City or zip code"
+            autocomplete="off" autocorrect="off" spellcheck="false"
+            onkeydown="if(event.key==='Enter') saveLocation()">
+          <button class="set-btn" id="set-btn" onclick="saveLocation()">Set</button>
+        </div>`;
+      cr.style.display = 'none';
+      // Focus the location input
+      setTimeout(() => { const li=$('loc-input'); if(li) li.focus(); }, 100);
+    }
+  }
+
+  // ── Save location ──
+  async function saveLocation() {
+    const li = $('loc-input');
+    const sb = $('set-btn');
+    if (!li) return;
+    const q = li.value.trim();
+    if (!q) { li.classList.add('error'); return; }
+
+    if (!navigator.onLine) {
+      li.classList.add('error');
+      li.value = '';
+      li.placeholder = 'Offline — connect to set location';
+      return;
+    }
+
+    li.classList.remove('error');
+    sb.textContent = '···';
+    sb.disabled = true;
+
+    try {
+      const res  = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=1&language=en&format=json`);
+      const data = await res.json();
+
+      if (!data.results || !data.results.length) {
+        li.classList.add('error');
+        li.value = '';
+        li.placeholder = 'Not found — try city name';
+        sb.textContent = 'Set';
+        sb.disabled = false;
+        return;
+      }
+
+      const { latitude, longitude, name, admin1 } = data.results[0];
+      const locName = admin1 ? `${name}, ${admin1}` : name;
+      setSaved({ lat: latitude, lon: longitude, name: locName });
+      clearLast();
+      renderControls();
+      // Auto-fetch immediately after saving
+      await fetchOutdoor();
+
+    } catch {
+      li.placeholder = 'Network error — try again';
+      li.value = '';
+      sb.textContent = 'Set';
+      sb.disabled = false;
+    }
+  }
+
+  // ── Change location ──
+  function changeLocation() {
+    clearSaved();
+    clearLast();
+    fields.outTemp.value = ''; fields.outRH.value = '';
+    pLen.outTemp = 0; pLen.outRH = 0;
+    renderControls();
+    render();
+  }
+
+  // ── Fetch outdoor weather ──
+  async function fetchOutdoor() {
+    const loc = getSaved();
+    if (!loc) { renderControls(); return; }
+
+    const btn = $('fetch-btn');
+
+    if (!navigator.onLine) {
+      // Offline: keep showing the last reading (if any) instead of failing hard.
+      const last = getLast();
+      if (last) $('out-lbl').textContent = `Outdoor · ${loc.name} · ${last.time} (offline)`;
+      else      $('out-lbl').textContent = `Outdoor · ${loc.name} · offline — no saved reading`;
+      return;
+    }
+
+    if (btn) { btn.textContent = '···'; btn.disabled = true; }
+
+    try {
+      const res  = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${loc.lat.toFixed(4)}&longitude=${loc.lon.toFixed(4)}&current=temperature_2m,relative_humidity_2m&temperature_unit=fahrenheit`);
+      const data = await res.json();
+
+      const temp = String(Math.round(data.current.temperature_2m));
+      const rh   = String(Math.round(data.current.relative_humidity_2m));
+      fields.outTemp.value = temp; pLen.outTemp = temp.length;
+      fields.outRH.value   = rh;  pLen.outRH   = rh.length;
+
+      const time = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+      $('out-lbl').textContent = `Outdoor · ${loc.name} · ${time}`;
+      setLast({ temp, rh, time });
+
+      render();
+      setTimeout(() => jump(fields.inTemp), 100);
+
+    } catch {
+      $('out-lbl').textContent = navigator.onLine
+        ? `Outdoor · ${loc.name} (failed — enter manually)`
+        : `Outdoor · ${loc.name} (offline — enter manually)`;
+    }
+
+    if (btn) { btn.textContent = 'Fetch Live'; btn.disabled = false; }
+  }
+
+  // ── Restore last reading (so the app is useful offline / on reopen) ──
+  function restoreLast() {
+    const loc = getSaved();
+    const last = getLast();
+    if (!loc || !last) return;
+    fields.outTemp.value = last.temp; pLen.outTemp = String(last.temp).length;
+    fields.outRH.value   = last.rh;   pLen.outRH   = String(last.rh).length;
+    const tail = navigator.onLine ? `${last.time} (last)` : `${last.time} (offline)`;
+    $('out-lbl').textContent = `Outdoor · ${loc.name} · ${tail}`;
+  }
+
+  // ── Auto-advance inputs ──
+  function wire(input, key, next, allowNeg) {
+    input.addEventListener('input', e => {
+      let v = e.target.value.replace(allowNeg ? /[^\d-]/g : /\D/g, '');
+      if (allowNeg) {
+        // keep at most one leading '-'
+        const neg = v[0] === '-';
+        v = (neg ? '-' : '') + v.replace(/-/g, '').slice(0, 3);
+      } else {
+        v = v.slice(0, 3);
+      }
+      e.target.value = v;
+      const go = done(v, pLen[key]);
+      pLen[key] = v.length;
+      render();
+      if (go && next) setTimeout(() => jump(next), 30);
+    });
+  }
+
+  // ── Clear readings only (keep location) ──
+  function clearReadings() {
+    Object.values(fields).forEach(f => f.value = '');
+    Object.keys(pLen).forEach(k => pLen[k] = 0);
+    clearLast();
+    const loc = getSaved();
+    if (loc) $('out-lbl').textContent = `Outdoor · ${loc.name}`;
+    render();
+    const fb = $('fetch-btn');
+    if (fb) fb.focus(); else setTimeout(() => jump(fields.outTemp), 50);
+  }
+
+  // ── Wire inputs (temp fields allow negative °F) ──
+  wire(fields.outTemp, 'outTemp', fields.outRH, true);
+  wire(fields.outRH,  'outRH',  fields.inTemp, false);
+  wire(fields.inTemp, 'inTemp', fields.inRH,  true);
+  wire(fields.inRH,   'inRH',  null, false);
+
+  // ── Init ──
+  window.addEventListener('load', () => {
+    renderControls();
+    restoreLast();
+    render();
+  });
+</script>
+
+<!-- Service worker: offline app shell, scoped to /vent/ -->
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('service-worker.js', { scope: './' }).catch(() => {});
+    });
+  }
+</script>
+</body>
+</html>
