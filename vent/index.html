@@ -148,6 +148,51 @@
     .compare-vs    { color: var(--border); font-size: 18px; align-self: center; }
 
     .footer-note { margin-top: 14px; font-size: 10px; color: var(--border); text-align: center; letter-spacing: .05em; }
+
+    /* ── Indoor scan ── */
+    .scan-btn {
+      background: transparent; border: 1px solid var(--border);
+      color: var(--muted); border-radius: 6px; padding: 5px 11px;
+      font-size: 11px; font-family: var(--sans); cursor: pointer;
+      letter-spacing: .04em; white-space: nowrap;
+    }
+    .scan-btn:active  { border-color: var(--accent); color: var(--accent); }
+    .scan-btn:disabled { opacity: .5; cursor: default; }
+    .scan-status {
+      display: none; margin-top: 10px; font-size: 11px;
+      color: var(--muted); text-align: center; letter-spacing: .03em;
+    }
+    .scan-status.show  { display: block; }
+    .scan-status.error { color: var(--red); }
+
+    /* ── History ── */
+    .log-btn {
+      background: transparent; border: 1px solid var(--accent);
+      color: var(--accent); border-radius: 6px; padding: 5px 11px;
+      font-size: 11px; font-weight: 700; letter-spacing: .05em;
+      font-family: var(--sans); cursor: pointer; white-space: nowrap;
+    }
+    .log-btn:disabled { opacity: .4; cursor: default; border-color: var(--border); color: var(--muted); }
+    .hist-empty { font-size: 12px; color: var(--muted); text-align: center; padding: 6px 0; }
+    .hist-row {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px; padding: 9px 0; border-top: 1px solid var(--border);
+    }
+    .hist-row:first-child { border-top: none; }
+    .hist-main  { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .hist-label { font-size: 13px; font-weight: 700; letter-spacing: -.01em; }
+    .hist-date  { font-size: 10px; color: var(--muted); letter-spacing: .04em; }
+    .hist-vals  { font-size: 11px; color: var(--text); font-family: var(--mono); }
+    .hist-del {
+      background: transparent; border: none; color: var(--muted);
+      font-size: 20px; line-height: 1; cursor: pointer; padding: 0 4px; flex-shrink: 0;
+    }
+    .hist-del:active { color: var(--red); }
+    .hist-clear {
+      display: none; font-size: 10px; color: var(--muted); cursor: pointer;
+      text-align: right; margin-top: 8px; letter-spacing: .04em;
+    }
+    .hist-clear:hover { color: var(--red); }
   </style>
 </head>
 <body>
@@ -194,6 +239,8 @@
   <div class="section">
     <div class="section-header">
       <span class="section-label">Indoor</span>
+      <button class="scan-btn" id="scan-btn" onclick="triggerScan()">📷 Scan</button>
+      <input type="file" accept="image/*" capture="environment" id="scan-file" style="display:none" onchange="handleScanFile(event)">
     </div>
     <div class="inputs">
       <div class="input-group">
@@ -215,6 +262,7 @@
       <div><span class="dp-number" id="in-dp">—</span><span class="dp-suffix" id="in-sfx">°F</span></div>
       <div class="dp-tag">dew point</div>
     </div>
+    <div class="scan-status" id="scan-status"></div>
   </div>
 
   <!-- VERDICT -->
@@ -225,12 +273,26 @@
   </div>
 
   <div class="footer-note">Vent when outdoor DP &lt; indoor DP</div>
+
+  <!-- HISTORY -->
+  <div class="section" id="history-section">
+    <div class="section-header">
+      <span class="section-label">History</span>
+      <button class="log-btn" id="log-btn" onclick="logReading()" disabled>＋ Log</button>
+    </div>
+    <div id="hist-list"></div>
+    <div class="hist-clear" id="hist-clear" onclick="clearLog()">clear all</div>
+  </div>
 </div>
 
 <script>
   const G='#3CC470', Y='#D4A017', R='#E05050', TX='#D8E4F0', BD='#263040', AC='#4A9ECC';
   const LS_KEY  = 'ventseal_home';   // saved location
   const LS_LAST = 'ventseal_last';   // last fetched outdoor reading (for offline)
+  const LS_LOG  = 'ventseal_log';    // saved reading history
+
+  // Snapshot of the current computed reading, used by the History log.
+  let current = { oDP:null, iDP:null, label:null, color:null };
 
   const $ = id => document.getElementById(id);
   const fields = {
@@ -296,6 +358,8 @@
         ? 'Enter indoor temp + humidity for a reading.'
         : 'Set your home location above, then enter indoor temp + humidity.';
       v.innerHTML=`<div class="verdict-placeholder">${hint}</div>`;
+      current = { oDP:null, iDP:null, label:null, color:null };
+      updateLogBtn();
       return;
     }
     const d=oDP-iDP;
@@ -304,6 +368,9 @@
     else if (d<=0)  { label='OK to Vent';  sub=`Outdoor is ${Math.abs(d).toFixed(1)}°F drier — small gain`;       color=G; }
     else if (d<=3)  { label='Borderline';  sub='Nearly equal — comfort choice only';                               color=Y; }
     else            { label='Stay Closed'; sub=`Outdoor is ${d.toFixed(1)}°F wetter — importing moisture`;         color=R; }
+
+    current = { oDP, iDP, label, color };
+    updateLogBtn();
 
     v.style.cssText=`border:1px solid ${color}55;background:${color}12`;
     v.innerHTML=`
@@ -489,6 +556,246 @@
     if (fb) fb.focus(); else setTimeout(() => jump(fields.outTemp), 50);
   }
 
+  // ── History log ──────────────────────────────────────────────────────
+  function getLog() {
+    try { return JSON.parse(localStorage.getItem(LS_LOG)) || []; } catch { return []; }
+  }
+  function setLog(arr) {
+    try { localStorage.setItem(LS_LOG, JSON.stringify(arr)); } catch {}
+  }
+
+  function updateLogBtn() {
+    const btn = $('log-btn');
+    if (btn) btn.disabled = (current.oDP === null || current.iDP === null);
+  }
+
+  function logReading() {
+    if (current.oDP === null || current.iDP === null) return;
+    const loc = getSaved();
+    const entry = {
+      id: Date.now() + '-' + Math.random().toString(36).slice(2, 7),
+      t: Date.now(),
+      label: current.label,
+      color: current.color,
+      oDP: +current.oDP.toFixed(1),
+      iDP: +current.iDP.toFixed(1),
+      place: loc ? loc.name : ''
+    };
+    const log = getLog();
+    log.unshift(entry);
+    if (log.length > 50) log.length = 50;   // cap the list
+    setLog(log);
+    renderLog();
+  }
+
+  function deleteLogEntry(id) {
+    setLog(getLog().filter(e => e.id !== id));
+    renderLog();
+  }
+
+  function clearLog() {
+    setLog([]);
+    renderLog();
+  }
+
+  function fmtLogDate(t) {
+    const d = new Date(t);
+    return d.toLocaleDateString([], { month:'short', day:'numeric' }) +
+           ' ' + d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+  }
+
+  function renderLog() {
+    const log = getLog();
+    const list = $('hist-list');
+    const clear = $('hist-clear');
+    if (!list) return;
+    if (!log.length) {
+      list.innerHTML = '<div class="hist-empty">No saved readings yet.</div>';
+      clear.style.display = 'none';
+      return;
+    }
+    clear.style.display = 'block';
+    list.innerHTML = log.map(e => `
+      <div class="hist-row">
+        <div class="hist-main">
+          <span class="hist-label" style="color:${e.color || TX}">${e.label || ''}</span>
+          <span class="hist-date">${fmtLogDate(e.t)}</span>
+          <span class="hist-vals">Out ${e.oDP}° / In ${e.iDP}°${e.place ? ' · ' + e.place : ''}</span>
+        </div>
+        <button class="hist-del" onclick="deleteLogEntry('${e.id}')" aria-label="delete reading">×</button>
+      </div>`).join('');
+  }
+
+  // ── 📷 Scan (on-device OCR of a thermostat display) ───────────────────
+  let _tessLoading = null;
+  function loadTesseract() {
+    if (window.Tesseract) return Promise.resolve(window.Tesseract);
+    if (_tessLoading) return _tessLoading;
+    _tessLoading = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+      s.onload  = () => resolve(window.Tesseract);
+      s.onerror = () => { _tessLoading = null; reject(new Error('Tesseract failed to load')); };
+      document.head.appendChild(s);
+    });
+    return _tessLoading;
+  }
+
+  function setScanStatus(msg, isError) {
+    const el = $('scan-status');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.classList.toggle('show', !!msg);
+    el.classList.toggle('error', !!isError);
+  }
+
+  function triggerScan() { const f = $('scan-file'); if (f) f.click(); }
+
+  // Flatten Tesseract word boxes regardless of v5 output shape.
+  function collectWords(data) {
+    if (data.words && data.words.length) return data.words;
+    const out = [];
+    (data.blocks || []).forEach(b =>
+      (b.paragraphs || []).forEach(p =>
+        (p.lines || []).forEach(l =>
+          (l.words || []).forEach(w => out.push(w)))));
+    return out;
+  }
+
+  // Turn recognised words into numeric tokens with layout metadata.
+  function scanTokens(words) {
+    const toks = [];
+    words.forEach(w => {
+      const text = (w.text || '').trim();
+      const m = text.match(/-?\d+(?:\.\d+)?/);
+      if (!m) return;
+      const val = parseFloat(m[0]);
+      if (isNaN(val)) return;
+      const bb = w.bbox || { x0:0, y0:0, x1:0, y1:0 };
+      toks.push({
+        val,
+        pct: /%/.test(text),
+        h:  bb.y1 - bb.y0,         // font size proxy
+        cy: (bb.y0 + bb.y1) / 2    // vertical position
+      });
+    });
+    return toks;
+  }
+
+  // From a vertical band of tokens, pick a temperature (big font) + humidity.
+  function classifyBand(group, medH) {
+    let temp = null, rh = null;
+    const nonPct = group.filter(t => !t.pct);
+    const tempCands = nonPct.filter(t => t.val >= -60 && t.val <= 130)
+                            .sort((a, b) => b.h - a.h);     // biggest font first
+    if (tempCands.length) temp = tempCands[0].val;
+    const tempTok = tempCands[0];
+
+    const pcts = group.filter(t => t.pct && t.val >= 0 && t.val <= 100);
+    if (pcts.length) {
+      rh = pcts[0].val;
+    } else {
+      const rhCands = nonPct.filter(t => t !== tempTok && t.val >= 1 && t.val <= 100 && t.h <= medH * 1.15)
+                            .sort((a, b) => a.h - b.h);      // smallest font first
+      if (rhCands.length) rh = rhCands[0].val;
+    }
+    return { temp, rh };
+  }
+
+  // Last-resort scrape straight from the OCR text.
+  function scrapeRaw(text) {
+    const t = text || '';
+    let rh = null, temp = null;
+    const pm = t.match(/(\d{1,3})\s*%/);
+    if (pm) { const v = +pm[1]; if (v >= 0 && v <= 100) rh = v; }
+    const nums = (t.match(/-?\d{1,3}(?:\.\d)?/g) || []).map(Number);
+    const tc = nums.find(n => n >= -60 && n <= 130 && n !== rh);
+    if (tc != null) temp = tc;
+    return { indoor: { temp, rh }, outdoor: { temp:null, rh:null } };
+  }
+
+  // Layout-aware interpretation: top band = indoor, bottom band = outdoor.
+  function interpretScan(words, rawText) {
+    const toks = scanTokens(words);
+    if (toks.length) {
+      const ys = toks.map(t => t.cy);
+      const midY = (Math.min(...ys) + Math.max(...ys)) / 2;
+      const hs = toks.map(t => t.h).sort((a, b) => a - b);
+      const medH = hs[Math.floor(hs.length / 2)] || 0;
+
+      const top = toks.filter(t => t.cy <= midY);
+      const bot = toks.filter(t => t.cy >  midY);
+
+      if (top.length && bot.length) {
+        const indoor  = classifyBand(top, medH);
+        const outdoor = classifyBand(bot, medH);
+        if (indoor.temp != null || indoor.rh != null || outdoor.temp != null || outdoor.rh != null)
+          return { indoor, outdoor };
+      }
+      // Fall back to a single indoor reading from all tokens.
+      const single = classifyBand(toks, medH);
+      if (single.temp != null || single.rh != null)
+        return { indoor: single, outdoor: { temp:null, rh:null } };
+    }
+    // Fall back to raw-text scraping.
+    return scrapeRaw(rawText);
+  }
+
+  function setField(key, num) {
+    const f = fields[key];
+    f.value = String(num);
+    pLen[key] = String(num).length;
+  }
+
+  function applyScan(result) {
+    const { indoor, outdoor } = result;
+    const filled = [];
+    let outdoorFromScan = false;
+    if (indoor.temp != null) { setField('inTemp', Math.round(indoor.temp)); filled.push('in ' + Math.round(indoor.temp) + '°'); }
+    if (indoor.rh   != null) { setField('inRH',   Math.round(indoor.rh));   filled.push(Math.round(indoor.rh) + '%'); }
+    if (outdoor.temp != null) { setField('outTemp', Math.round(outdoor.temp)); filled.push('out ' + Math.round(outdoor.temp) + '°'); outdoorFromScan = true; }
+    if (outdoor.rh   != null) { setField('outRH',   Math.round(outdoor.rh));   outdoorFromScan = true; }
+    if (outdoorFromScan) $('out-lbl').textContent = 'Outdoor · from thermostat';
+    render();
+    return filled;
+  }
+
+  async function handleScanFile(e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';   // allow re-picking the same file
+    if (!file) return;
+
+    const btn = $('scan-btn');
+    const orig = btn.textContent;
+
+    if (!navigator.onLine && !window.Tesseract) {
+      setScanStatus('Scan needs a connection the first time', true);
+      return;
+    }
+
+    setScanStatus('reading photo…', false);
+    btn.textContent = '···'; btn.disabled = true;
+
+    try {
+      const T = await loadTesseract();
+      const worker = await T.createWorker('eng');
+      await worker.setParameters({ tessedit_char_whitelist: '0123456789%°.' });
+      const { data } = await worker.recognize(file, {}, { blocks: true });
+      await worker.terminate();
+
+      const words = collectWords(data);
+      const result = interpretScan(words, data.text || '');
+      const filled = applyScan(result);
+
+      if (filled.length) setScanStatus('read ' + filled.join(' · ') + ' — verify', false);
+      else               setScanStatus('Couldn’t read it — enter manually', true);
+    } catch {
+      setScanStatus('Scan failed — enter manually', true);
+    } finally {
+      btn.textContent = orig; btn.disabled = false;
+    }
+  }
+
   // ── Wire inputs (temp fields allow negative °F) ──
   wire(fields.outTemp, 'outTemp', fields.outRH, true);
   wire(fields.outRH,  'outRH',  fields.inTemp, false);
@@ -500,6 +807,7 @@
     renderControls();
     restoreLast();
     render();
+    renderLog();
   });
 </script>
 

@@ -4,7 +4,7 @@
 // Live weather (Open-Meteo) is always network-only — we never try to fake it
 // offline; the app handles fetch failures gracefully on its own.
 
-const VERSION = 'v1';
+const VERSION = 'v2';
 const CACHE = `ventseal-shell-${VERSION}`;
 
 // App shell — relative to the SW location (/vent/).
@@ -40,28 +40,42 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(req.url);
 
-  // Cross-origin (the weather/geocoding APIs) — let the network handle it.
-  // No respondWith means default browser behavior; the app catches failures.
+  // Cross-origin (the weather/geocoding APIs, OCR CDN) — let the network
+  // handle it. No respondWith means default browser behavior; the app
+  // catches failures.
   if (url.origin !== self.location.origin) return;
 
-  // Same-origin: cache-first for the shell, fall back to network, then to the
-  // cached index.html for navigations when fully offline.
+  // Navigations — network-first so content updates show immediately when
+  // online, falling back to the cached shell when offline.
+  if (req.mode === 'navigate') {
+    event.respondWith(
+      fetch(req)
+        .then((resp) => {
+          if (resp && resp.ok && resp.type === 'basic') {
+            const copy = resp.clone();
+            caches.open(CACHE).then((cache) => cache.put('./index.html', copy));
+          }
+          return resp;
+        })
+        .catch(() => caches.match('./index.html').then((c) => c || caches.match('./')))
+    );
+    return;
+  }
+
+  // Other same-origin assets — cache-first with network fallback, caching
+  // successful responses so new assets get picked up.
   event.respondWith(
     caches.match(req).then((cached) => {
       if (cached) return cached;
       return fetch(req)
         .then((resp) => {
-          // Cache successful same-origin GETs so new assets get picked up.
           if (resp && resp.ok && resp.type === 'basic') {
             const copy = resp.clone();
             caches.open(CACHE).then((cache) => cache.put(req, copy));
           }
           return resp;
         })
-        .catch(() => {
-          if (req.mode === 'navigate') return caches.match('./index.html');
-          return Response.error();
-        });
+        .catch(() => Response.error());
     })
   );
 });
