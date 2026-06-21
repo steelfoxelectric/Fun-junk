@@ -174,6 +174,21 @@
       text-align: right; margin-top: 8px; letter-spacing: .04em;
     }
     .hist-clear:hover { color: var(--red); }
+
+    /* ── Today trend ── */
+    #trend { display: none; margin-bottom: 14px; }
+    .trend-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .trend-title { font-size: 10px; color: var(--muted); letter-spacing: .12em; text-transform: uppercase; font-weight: 600; }
+    .trend-legend { display: flex; gap: 10px; }
+    .trend-key { font-size: 10px; letter-spacing: .04em; }
+    .trend-svg {
+      width: 100%; height: auto; display: block;
+      background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    }
+    .trend-foot {
+      display: flex; justify-content: space-between; margin-top: 6px;
+      font-size: 10px; color: var(--muted); font-family: var(--mono); letter-spacing: .02em;
+    }
   </style>
 </head>
 <body>
@@ -258,6 +273,7 @@
       <span class="section-label">History</span>
       <span class="hist-auto">auto-saved</span>
     </div>
+    <div id="trend"></div>
     <div id="hist-list"></div>
     <div class="hist-clear" id="hist-clear" onclick="clearLog()">clear all</div>
   </div>
@@ -268,7 +284,7 @@
   const LS_KEY  = 'ventseal_home';   // saved location
   const LS_LAST = 'ventseal_last';   // last fetched outdoor reading (for offline)
   const LS_LOG  = 'ventseal_log';    // saved reading history
-  const APP_VERSION = 'v1.5.0';      // shown in the footer; bump on each release
+  const APP_VERSION = 'v1.6.0';      // shown in the footer; bump on each release
   const BUILD_DATE  = '2026-06-21';  // YYYY-MM-DD; update alongside APP_VERSION
 
   // Snapshot of the current computed reading, used by the History log.
@@ -576,8 +592,11 @@
   }
 
   // Auto-log: once a complete reading settles (debounced), save it. The
-  // debounce avoids logging every keystroke; the dedupe keeps an unchanged
-  // reading from piling up identical rows.
+  // debounce avoids logging every keystroke. Readings taken close together
+  // (same place, within COALESCE_MS) are treated as one check and the most
+  // recent row is updated in place — so fine-tuning the inputs doesn't spawn
+  // a cluster of near-identical rows. Checks further apart each get a row.
+  const COALESCE_MS = 10 * 60 * 1000;   // 10 minutes
   let _logTimer = null;
   function scheduleAutoLog() {
     clearTimeout(_logTimer);
@@ -591,16 +610,25 @@
     const place = loc ? loc.name : '';
     const oDP = +current.oDP.toFixed(1);
     const iDP = +current.iDP.toFixed(1);
+    const now = Date.now();
     const log = getLog();
-    // Skip if it matches the most recent entry.
-    if (log.length && log[0].oDP === oDP && log[0].iDP === iDP && log[0].place === place) return;
-    log.unshift({
-      id: Date.now() + '-' + Math.random().toString(36).slice(2, 7),
-      t: Date.now(),
+    const top = log[0];
+
+    const entry = {
+      id: now + '-' + Math.random().toString(36).slice(2, 7),
+      t: now,
       label: current.label,
       color: current.color,
       oDP, iDP, place
-    });
+    };
+
+    if (top && top.place === place && (now - top.t) < COALESCE_MS) {
+      // Same recent check — nothing to do if unchanged, else update in place.
+      if (top.oDP === oDP && top.iDP === iDP) return;
+      log[0] = entry;
+    } else {
+      log.unshift(entry);
+    }
     if (log.length > 50) log.length = 50;   // cap the list
     setLog(log);
     renderLog();
@@ -622,11 +650,69 @@
            ' ' + d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
   }
 
+  // Today's trend: a compact dual-line sparkline (outdoor vs indoor dew
+  // point) over today's logged readings, with the net change. Hidden until
+  // there are at least two readings today.
+  function renderTrend() {
+    const el = $('trend');
+    if (!el) return;
+    const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+    const today = getLog()
+      .filter(e => e.t >= startOfDay.getTime())
+      .sort((a, b) => a.t - b.t);   // oldest → newest
+
+    if (today.length < 2) { el.style.display = 'none'; el.innerHTML = ''; return; }
+
+    const W = 300, H = 90, padX = 10, padTop = 10, padBot = 16;
+    const ts = today.map(e => e.t);
+    const minT = Math.min(...ts), maxT = Math.max(...ts);
+    const vals = today.flatMap(e => [e.oDP, e.iDP]);
+    let minV = Math.min(...vals), maxV = Math.max(...vals);
+    if (maxV === minV) { maxV += 1; minV -= 1; }   // avoid a flat divide-by-zero
+
+    const x = t => padX + (maxT === minT ? 0 : (t - minT) / (maxT - minT)) * (W - 2 * padX);
+    const y = v => padTop + (1 - (v - minV) / (maxV - minV)) * (H - padTop - padBot);
+
+    const series = (key, color) => {
+      const pts = today.map(e => `${x(e.t).toFixed(1)},${y(e[key]).toFixed(1)}`).join(' ');
+      const dots = today.map(e =>
+        `<circle cx="${x(e.t).toFixed(1)}" cy="${y(e[key]).toFixed(1)}" r="2.4" fill="${color}"/>`).join('');
+      return `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>${dots}`;
+    };
+
+    const fmtT  = t => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const delta = (a, b) => {
+      const d = +(b - a).toFixed(1);
+      const arrow = d > 0 ? '↑' : d < 0 ? '↓' : '→';
+      return `${arrow}${Math.abs(d).toFixed(1)}°`;
+    };
+    const first = today[0], last = today[today.length - 1];
+
+    el.style.display = 'block';
+    el.innerHTML = `
+      <div class="trend-head">
+        <span class="trend-title">Today</span>
+        <span class="trend-legend">
+          <span class="trend-key" style="color:${AC}">● Out</span>
+          <span class="trend-key" style="color:${TX}">● In</span>
+        </span>
+      </div>
+      <svg class="trend-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Dew point trend for today">
+        ${series('oDP', AC)}
+        ${series('iDP', TX)}
+      </svg>
+      <div class="trend-foot">
+        <span>${fmtT(minT)} → ${fmtT(maxT)}</span>
+        <span>Out ${delta(first.oDP, last.oDP)} · In ${delta(first.iDP, last.iDP)}</span>
+      </div>`;
+  }
+
   function renderLog() {
     const log = getLog();
     const list = $('hist-list');
     const clear = $('hist-clear');
     if (!list) return;
+    renderTrend();
     if (!log.length) {
       list.innerHTML = '<div class="hist-empty">No saved readings yet.</div>';
       clear.style.display = 'none';

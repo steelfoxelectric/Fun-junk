@@ -6,7 +6,7 @@
 
 // Keep this in step with APP_VERSION in index.html so each release gets a
 // fresh cache and the activate handler clears the previous one.
-const VERSION = 'v1.5.0';
+const VERSION = 'v1.6.0';
 const CACHE = `ventseal-shell-${VERSION}`;
 
 // App shell — relative to the SW location (/vent/).
