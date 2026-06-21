@@ -270,7 +270,7 @@
     </div>
   </div>
 
-  <div class="footer-note">Vent when outdoor DP &lt; indoor DP</div>
+  <div class="footer-note">Vent when outdoor DP &lt; indoor DP · <span id="app-version"></span></div>
 
   <!-- HISTORY -->
   <div class="section" id="history-section">
@@ -288,6 +288,7 @@
   const LS_KEY  = 'ventseal_home';   // saved location
   const LS_LAST = 'ventseal_last';   // last fetched outdoor reading (for offline)
   const LS_LOG  = 'ventseal_log';    // saved reading history
+  const APP_VERSION = 'v1.4.0';      // shown in the footer; bump on each release
 
   // Snapshot of the current computed reading, used by the History log.
   let current = { oDP:null, iDP:null, label:null, color:null };
@@ -1041,6 +1042,7 @@
 
   // ── Init ──
   window.addEventListener('load', () => {
+    $('app-version').textContent = APP_VERSION;
     renderControls();
     restoreLast();
     render();
