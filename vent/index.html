@@ -166,13 +166,10 @@
     .scan-status.error { color: var(--red); }
 
     /* ── History ── */
-    .log-btn {
-      background: transparent; border: 1px solid var(--accent);
-      color: var(--accent); border-radius: 6px; padding: 5px 11px;
-      font-size: 11px; font-weight: 700; letter-spacing: .05em;
-      font-family: var(--sans); cursor: pointer; white-space: nowrap;
+    .hist-auto {
+      font-size: 9px; color: var(--muted); letter-spacing: .12em;
+      text-transform: uppercase; opacity: .8;
     }
-    .log-btn:disabled { opacity: .4; cursor: default; border-color: var(--border); color: var(--muted); }
     .hist-empty { font-size: 12px; color: var(--muted); text-align: center; padding: 6px 0; }
     .hist-row {
       display: flex; align-items: center; justify-content: space-between;
@@ -278,7 +275,7 @@
   <div class="section" id="history-section">
     <div class="section-header">
       <span class="section-label">History</span>
-      <button class="log-btn" id="log-btn" onclick="logReading()" disabled>＋ Log</button>
+      <span class="hist-auto">auto-saved</span>
     </div>
     <div id="hist-list"></div>
     <div class="hist-clear" id="hist-clear" onclick="clearLog()">clear all</div>
@@ -359,7 +356,7 @@
         : 'Set your home location above, then enter indoor temp + humidity.';
       v.innerHTML=`<div class="verdict-placeholder">${hint}</div>`;
       current = { oDP:null, iDP:null, label:null, color:null };
-      updateLogBtn();
+      scheduleAutoLog();
       return;
     }
     const d=oDP-iDP;
@@ -370,7 +367,7 @@
     else            { label='Stay Closed'; sub=`Outdoor is ${d.toFixed(1)}°F wetter — importing moisture`;         color=R; }
 
     current = { oDP, iDP, label, color };
-    updateLogBtn();
+    scheduleAutoLog();
 
     v.style.cssText=`border:1px solid ${color}55;background:${color}12`;
     v.innerHTML=`
@@ -564,25 +561,32 @@
     try { localStorage.setItem(LS_LOG, JSON.stringify(arr)); } catch {}
   }
 
-  function updateLogBtn() {
-    const btn = $('log-btn');
-    if (btn) btn.disabled = (current.oDP === null || current.iDP === null);
+  // Auto-log: once a complete reading settles (debounced), save it. The
+  // debounce avoids logging every keystroke; the dedupe keeps an unchanged
+  // reading from piling up identical rows.
+  let _logTimer = null;
+  function scheduleAutoLog() {
+    clearTimeout(_logTimer);
+    if (current.oDP === null || current.iDP === null) return;
+    _logTimer = setTimeout(autoLog, 1500);
   }
 
-  function logReading() {
+  function autoLog() {
     if (current.oDP === null || current.iDP === null) return;
     const loc = getSaved();
-    const entry = {
+    const place = loc ? loc.name : '';
+    const oDP = +current.oDP.toFixed(1);
+    const iDP = +current.iDP.toFixed(1);
+    const log = getLog();
+    // Skip if it matches the most recent entry.
+    if (log.length && log[0].oDP === oDP && log[0].iDP === iDP && log[0].place === place) return;
+    log.unshift({
       id: Date.now() + '-' + Math.random().toString(36).slice(2, 7),
       t: Date.now(),
       label: current.label,
       color: current.color,
-      oDP: +current.oDP.toFixed(1),
-      iDP: +current.iDP.toFixed(1),
-      place: loc ? loc.name : ''
-    };
-    const log = getLog();
-    log.unshift(entry);
+      oDP, iDP, place
+    });
     if (log.length > 50) log.length = 50;   // cap the list
     setLog(log);
     renderLog();
