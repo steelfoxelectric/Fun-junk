@@ -169,6 +169,7 @@
     .dl-row { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; }
     .dl-k { color: var(--muted); letter-spacing: .04em; white-space: nowrap; }
     .dl-v { color: var(--text); font-family: var(--mono); text-align: right; }
+    .dl-why { font-size: 11px; color: var(--muted); line-height: 1.5; font-style: italic; margin-top: 1px; }
     .hist-label { font-size: 13px; font-weight: 700; letter-spacing: -.01em; }
     .hist-date  { font-size: 10px; color: var(--muted); letter-spacing: .04em; }
     .hist-vals  { font-size: 11px; color: var(--text); font-family: var(--mono); }
@@ -292,7 +293,7 @@
   const LS_KEY  = 'ventseal_home';   // saved location
   const LS_LAST = 'ventseal_last';   // last fetched outdoor reading (for offline)
   const LS_LOG  = 'ventseal_log';    // saved reading history
-  const APP_VERSION = 'v1.7.0';      // shown in the footer; bump on each release
+  const APP_VERSION = 'v1.7.1';      // shown in the footer; bump on each release
   const BUILD_DATE  = '2026-06-21';  // YYYY-MM-DD; update alongside APP_VERSION
 
   // Snapshot of the current computed reading, used by the History log.
@@ -355,7 +356,15 @@
     else            { n.textContent='—'; n.classList.remove('live'); s.style.display='none'; }
   }
 
-  // ── Verdict ──
+  // ── Verdict ── (shared by the verdict card and the history detail view)
+  function verdictFor(oDP, iDP) {
+    const d = oDP - iDP;
+    if (d <= -5) return { label:'Open Up',     sub:`Outdoor is ${Math.abs(d).toFixed(1)}°F drier — actively helps`, color:G };
+    if (d <= 0)  return { label:'OK to Vent',  sub:`Outdoor is ${Math.abs(d).toFixed(1)}°F drier — small gain`,     color:G };
+    if (d <= 3)  return { label:'Borderline',  sub:'Nearly equal — comfort choice only',                            color:Y };
+    return            { label:'Stay Closed', sub:`Outdoor is ${d.toFixed(1)}°F wetter — importing moisture`,      color:R };
+  }
+
   function render() {
     // Outdoor: prefer the API's precise dew point if the fields still hold
     // exactly what was fetched (no manual edit since). Otherwise compute.
@@ -382,13 +391,7 @@
       scheduleAutoLog();
       return;
     }
-    const d=oDP-iDP;
-    let label,sub,color;
-    if      (d<=-5) { label='Open Up';     sub=`Outdoor is ${Math.abs(d).toFixed(1)}°F drier — actively helps`;  color=G; }
-    else if (d<=0)  { label='OK to Vent';  sub=`Outdoor is ${Math.abs(d).toFixed(1)}°F drier — small gain`;       color=G; }
-    else if (d<=3)  { label='Borderline';  sub='Nearly equal — comfort choice only';                               color=Y; }
-    else            { label='Stay Closed'; sub=`Outdoor is ${d.toFixed(1)}°F wetter — importing moisture`;         color=R; }
-
+    const { label, sub, color } = verdictFor(oDP, iDP);
     current = { oDP, iDP, label, color };
     scheduleAutoLog();
 
@@ -741,6 +744,9 @@
       : d < 0 ? `outdoor ${Math.abs(d).toFixed(1)}° drier`
               : `outdoor ${d.toFixed(1)}° wetter`;
     rows.push(`<div class="dl-row"><span class="dl-k">Difference</span><span class="dl-v">${diff}</span></div>`);
+    // Why-line: the same explanation the verdict card gives, derived from the
+    // stored dew points so it works for older entries too.
+    rows.push(`<div class="dl-why">${verdictFor(e.oDP, e.iDP).sub}</div>`);
     const when = new Date(e.t).toLocaleString([],
       { weekday:'short', month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
     rows.push(`<div class="dl-row"><span class="dl-k">When</span><span class="dl-v">${when}</span></div>`);
