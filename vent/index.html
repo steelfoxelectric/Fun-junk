@@ -149,22 +149,6 @@
 
     .footer-note { margin-top: 14px; font-size: 10px; color: var(--border); text-align: center; letter-spacing: .05em; }
 
-    /* ── Indoor scan ── */
-    .scan-btn {
-      background: transparent; border: 1px solid var(--border);
-      color: var(--muted); border-radius: 6px; padding: 5px 11px;
-      font-size: 11px; font-family: var(--sans); cursor: pointer;
-      letter-spacing: .04em; white-space: nowrap;
-    }
-    .scan-btn:active  { border-color: var(--accent); color: var(--accent); }
-    .scan-btn:disabled { opacity: .5; cursor: default; }
-    .scan-status {
-      display: none; margin-top: 10px; font-size: 11px;
-      color: var(--muted); text-align: center; letter-spacing: .03em;
-    }
-    .scan-status.show  { display: block; }
-    .scan-status.error { color: var(--red); }
-
     /* ── History ── */
     .hist-auto {
       font-size: 9px; color: var(--muted); letter-spacing: .12em;
@@ -236,8 +220,6 @@
   <div class="section">
     <div class="section-header">
       <span class="section-label">Indoor</span>
-      <button class="scan-btn" id="scan-btn" onclick="triggerScan()">📷 Scan</button>
-      <input type="file" accept="image/*" capture="environment" id="scan-file" style="display:none" onchange="handleScanFile(event)">
     </div>
     <div class="inputs">
       <div class="input-group">
@@ -259,8 +241,6 @@
       <div><span class="dp-number" id="in-dp">—</span><span class="dp-suffix" id="in-sfx">°F</span></div>
       <div class="dp-tag">dew point</div>
     </div>
-    <div class="scan-status" id="scan-status"></div>
-    <div class="hist-clear" id="fix-clear" onclick="clearFixes()" style="display:none">⌀ forget scan corrections</div>
   </div>
 
   <!-- VERDICT -->
@@ -288,7 +268,7 @@
   const LS_KEY  = 'ventseal_home';   // saved location
   const LS_LAST = 'ventseal_last';   // last fetched outdoor reading (for offline)
   const LS_LOG  = 'ventseal_log';    // saved reading history
-  const APP_VERSION = 'v1.4.0';      // shown in the footer; bump on each release
+  const APP_VERSION = 'v1.5.0';      // shown in the footer; bump on each release
   const BUILD_DATE  = '2026-06-21';  // YYYY-MM-DD; update alongside APP_VERSION
 
   // Snapshot of the current computed reading, used by the History log.
@@ -572,22 +552,6 @@
       render();
       if (go && next) setTimeout(() => jump(next), 30);
     });
-
-    // Learn-on-edit: if you hand-correct a field within 30s of a scan, and
-    // the corrected value differs from what the scan put there, remember it
-    // so the same OCR mistake auto-fixes next time.
-    input.addEventListener('change', () => {
-      const scanned = lastScanValues[key];
-      if (scanned == null) return;
-      if (Date.now() - lastScanAt > 30000) return;   // only just after a scan
-      const corrected = parseInt(input.value, 10);
-      if (isNaN(corrected)) return;
-      if (corrected !== scanned) {
-        learnFix(key, scanned, corrected);
-        // Stop tracking this field so we don't double-learn from further edits.
-        delete lastScanValues[key];
-      }
-    });
   }
 
   // ── Clear readings only (keep location) ──
@@ -596,7 +560,6 @@
     Object.keys(pLen).forEach(k => pLen[k] = 0);
     clearLast();
     apiOutdoor = null;
-    lastScanValues = {};   // forget the in-flight scan so a Clear can't mis-learn
     const loc = getSaved();
     if (loc) $('out-lbl').textContent = `Outdoor · ${loc.name}`;
     render();
@@ -681,360 +644,6 @@
       </div>`).join('');
   }
 
-  // ── 📷 Scan (on-device OCR of a thermostat display) ───────────────────
-  let _tessLoading = null;
-  function loadTesseract() {
-    if (window.Tesseract) return Promise.resolve(window.Tesseract);
-    if (_tessLoading) return _tessLoading;
-    _tessLoading = new Promise((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
-      s.onload  = () => resolve(window.Tesseract);
-      s.onerror = () => { _tessLoading = null; reject(new Error('Tesseract failed to load')); };
-      document.head.appendChild(s);
-    });
-    return _tessLoading;
-  }
-
-  function setScanStatus(msg, isError) {
-    const el = $('scan-status');
-    if (!el) return;
-    el.textContent = msg || '';
-    el.classList.toggle('show', !!msg);
-    el.classList.toggle('error', !!isError);
-  }
-
-  function triggerScan() { const f = $('scan-file'); if (f) f.click(); }
-
-  // Flatten Tesseract word boxes regardless of v5 output shape.
-  function collectWords(data) {
-    if (data.words && data.words.length) return data.words;
-    const out = [];
-    (data.blocks || []).forEach(b =>
-      (b.paragraphs || []).forEach(p =>
-        (p.lines || []).forEach(l =>
-          (l.words || []).forEach(w => out.push(w)))));
-    return out;
-  }
-
-  // Turn recognised words into numeric tokens with layout metadata.
-  // We capture cx (horizontal centre) because the Honeywell screen lays
-  // OUTDOOR and INDOOR out side-by-side (left/right), not stacked.
-  function scanTokens(words) {
-    const toks = [];
-    words.forEach(w => {
-      const text = (w.text || '').trim();
-      const m = text.match(/-?\d+(?:\.\d+)?/);
-      if (!m) return;
-      const val = parseFloat(m[0]);
-      if (isNaN(val)) return;
-      const bb = w.bbox || { x0:0, y0:0, x1:0, y1:0 };
-      toks.push({
-        val,
-        pct: /%/.test(text),
-        h:  bb.y1 - bb.y0,         // font size proxy
-        cx: (bb.x0 + bb.x1) / 2,   // horizontal position
-        cy: (bb.y0 + bb.y1) / 2    // vertical position
-      });
-    });
-    return toks;
-  }
-
-  // Stitch split digits back together. The huge temp numerals on the
-  // thermostat frequently OCR as two separate single-digit tokens
-  // (e.g. "66" → "6" "6", or "42" → "4" "2"). We merge single-digit
-  // tokens that sit on the same row, close together, at a similar height
-  // *to each other* (not relative to the screen's biggest font, so it
-  // works for the medium-font outdoor temp as well as the giant indoor one).
-  function mergeSplitDigits(toks) {
-    const singles = toks.filter(t => !t.pct && t.val >= 0 && t.val <= 9);
-    const rest    = toks.filter(t => !(!t.pct && t.val >= 0 && t.val <= 9));
-    const used = new Set();
-    const order = singles
-      .map((t, i) => i)
-      .sort((a, b) => (Math.round(singles[a].cy/40) - Math.round(singles[b].cy/40)) || (singles[a].cx - singles[b].cx));
-    const merged = [];
-    for (const i of order) {
-      if (used.has(i)) continue;
-      const cur = { ...singles[i] };
-      used.add(i);
-      let changed = true;
-      while (changed) {
-        changed = false;
-        for (const j of order) {
-          if (used.has(j)) continue;
-          const o = singles[j];
-          const sameRow  = Math.abs(o.cy - cur.cy) <= cur.h * 0.5;
-          const closeX   = (o.cx - cur.cx) > 0 && (o.cx - cur.cx) <= cur.h * 1.5;
-          const similarH = Math.abs(o.h - cur.h) <= Math.max(cur.h, o.h) * 0.30;
-          if (sameRow && closeX && similarH) {
-            cur.val = parseInt(String(Math.trunc(cur.val)) + String(Math.trunc(o.val)), 10);
-            cur.cx  = (cur.cx + o.cx) / 2;
-            used.add(j);
-            changed = true;
-          }
-        }
-      }
-      merged.push(cur);
-    }
-    return rest.concat(merged);
-  }
-
-  // From a column of tokens, pick a temperature (biggest font) + humidity.
-  function classifyBand(group, medH) {
-    let temp = null, rh = null;
-    const nonPct = group.filter(t => !t.pct);
-    const tempCands = nonPct.filter(t => t.val >= -60 && t.val <= 130)
-                            .sort((a, b) => b.h - a.h);     // biggest font first
-    if (tempCands.length) temp = tempCands[0].val;
-    const tempTok = tempCands[0];
-
-    const pcts = group.filter(t => t.pct && t.val >= 0 && t.val <= 100);
-    if (pcts.length) {
-      rh = pcts[0].val;
-    } else {
-      const rhCands = nonPct.filter(t => t !== tempTok && t.val >= 1 && t.val <= 100 && t.h <= medH * 1.15)
-                            .sort((a, b) => a.h - b.h);      // smallest font first
-      if (rhCands.length) rh = rhCands[0].val;
-    }
-    return { temp, rh };
-  }
-
-  // Last-resort scrape straight from the OCR text.
-  function scrapeRaw(text) {
-    const t = text || '';
-    let rh = null, temp = null;
-    const pm = t.match(/(\d{1,3})\s*%/);
-    if (pm) { const v = +pm[1]; if (v >= 0 && v <= 100) rh = v; }
-    const nums = (t.match(/-?\d{1,3}(?:\.\d)?/g) || []).map(Number);
-    const tc = nums.find(n => n >= -60 && n <= 130 && n !== rh);
-    if (tc != null) temp = tc;
-    return { indoor: { temp, rh }, outdoor: { temp:null, rh:null } };
-  }
-
-  // Font size of the biggest temperature in a group (0 if none) — used to
-  // tell which cluster is the prominent (indoor) reading.
-  function bandTempHeight(group) {
-    const c = group.filter(t => !t.pct && t.val >= -60 && t.val <= 130)
-                   .sort((a, b) => b.h - a.h);
-    return c.length ? c[0].h : 0;
-  }
-
-  // Layout-aware interpretation that adapts to the display's orientation.
-  // We split the numbers into two clusters along whichever axis they spread
-  // across more (side-by-side screens spread in X, stacked ones in Y), then
-  // only treat it as a two-zone reading if BOTH clusters actually contain a
-  // temperature — otherwise it's a single zone (temp + humidity) and we keep
-  // it whole. Indoor is the cluster whose temperature is the larger font (the
-  // prominent reading, e.g. the giant center number on a Honeywell); the
-  // other cluster is outdoor. This avoids hardcoding left/right or top/bottom.
-  function interpretScan(words, rawText) {
-    let toks = scanTokens(words);
-    if (toks.length) {
-      toks = mergeSplitDigits(toks);
-
-      const hs = toks.map(t => t.h).sort((a, b) => a - b);
-      const medH = hs[Math.floor(hs.length / 2)] || 0;
-
-      const xs = toks.map(t => t.cx), ys = toks.map(t => t.cy);
-      const xSpread = Math.max(...xs) - Math.min(...xs);
-      const ySpread = Math.max(...ys) - Math.min(...ys);
-      const axis = xSpread >= ySpread ? 'cx' : 'cy';
-      const vals = toks.map(t => t[axis]);
-      const mid  = (Math.min(...vals) + Math.max(...vals)) / 2;
-
-      const a = toks.filter(t => t[axis] <= mid);
-      const b = toks.filter(t => t[axis] >  mid);
-
-      // Genuine two-zone only if both clusters have their own temperature.
-      const tA = bandTempHeight(a), tB = bandTempHeight(b);
-      if (a.length && b.length && tA > 0 && tB > 0) {
-        const ca = classifyBand(a, medH);
-        const cb = classifyBand(b, medH);
-        // Prefer the larger-font temperature as indoor. When the two fonts are
-        // ~equal (no size cue), fall back to layout convention: on a stacked
-        // display the top zone is indoor; on a side-by-side one, the right.
-        const tie = Math.abs(tA - tB) <= Math.max(tA, tB) * 0.15;
-        const indoorIsB = tie ? (axis === 'cx') : (tB > tA);
-        const indoor  = indoorIsB ? cb : ca;
-        const outdoor = indoorIsB ? ca : cb;
-        if (indoor.temp != null || indoor.rh != null || outdoor.temp != null || outdoor.rh != null)
-          return { indoor, outdoor };
-      }
-
-      // Single zone — classify everything together as the indoor reading.
-      const single = classifyBand(toks, medH);
-      if (single.temp != null || single.rh != null)
-        return { indoor: single, outdoor: { temp:null, rh:null } };
-    }
-    // Fall back to raw-text scraping.
-    return scrapeRaw(rawText);
-  }
-
-  function setField(key, num) {
-    const f = fields[key];
-    f.value = String(num);
-    pLen[key] = String(num).length;
-  }
-
-  // ── Range sanity bounds ───────────────────────────────────────────────
-  // Hard physical/plausibility limits. A scanned value outside these is
-  // almost certainly an OCR error (e.g. a giant "66" read as "6", or a
-  // stray time digit), so we reject it rather than silently logging junk.
-  const RANGE = {
-    temp: { min: -20, max: 120 },   // °F, generous for indoor+outdoor
-    rh:   { min: 1,   max: 100 }    // %
-  };
-  function inRange(kind, v) {
-    const r = RANGE[kind];
-    return v != null && v >= r.min && v <= r.max;
-  }
-
-  // ── Correction memory ─────────────────────────────────────────────────
-  // A lookup table of *your* recurring OCR errors, keyed per field. When a
-  // scan fills a field and you then hand-correct it shortly after, we save
-  // "scan said X in this field → you meant Y". Next time the scan produces
-  // X in that field, we auto-apply Y. This is not machine learning — it's a
-  // transparent memory of your specific repeat mistakes. Clearable.
-  const LS_FIX = 'ventseal_fixes';
-  function getFixes() {
-    try { return JSON.parse(localStorage.getItem(LS_FIX)) || {}; } catch { return {}; }
-  }
-  function setFixes(obj) {
-    try { localStorage.setItem(LS_FIX, JSON.stringify(obj)); } catch {}
-  }
-  // Apply a learned correction for a given field+value, if one exists.
-  function applyFix(key, val) {
-    if (val == null) return val;
-    const fixes = getFixes();
-    const k = key + ':' + Math.round(val);
-    const rec = fixes[k];
-    // Require the correction to have been seen at least twice to trust it,
-    // so a one-off typo doesn't poison future scans.
-    if (rec && rec.count >= 2) return rec.to;
-    return val;
-  }
-  // Record that, in this field, a scanned value was corrected to another.
-  function learnFix(key, fromVal, toVal) {
-    if (fromVal == null || toVal == null || fromVal === toVal) return;
-    const fixes = getFixes();
-    const k = key + ':' + fromVal;
-    // Drop any opposing rule (toVal → fromVal) so the two can't oscillate.
-    const reverse = key + ':' + toVal;
-    if (fixes[reverse] && fixes[reverse].to === fromVal) delete fixes[reverse];
-    const rec = fixes[k];
-    if (rec && rec.to === toVal) rec.count = Math.min((rec.count || 1) + 1, 9);
-    else fixes[k] = { to: toVal, count: 1 };
-    setFixes(fixes);
-    renderFixIndicator();
-  }
-
-  // Show/hide the "forget corrections" control based on how many active
-  // (trusted, count>=2) corrections exist.
-  function renderFixIndicator() {
-    const el = $('fix-clear');
-    if (!el) return;
-    const fixes = getFixes();
-    const active = Object.values(fixes).filter(r => r.count >= 2).length;
-    if (active > 0) {
-      el.style.display = 'block';
-      el.textContent = `⌀ forget scan corrections (${active})`;
-    } else {
-      el.style.display = 'none';
-    }
-  }
-
-  function clearFixes() {
-    try { localStorage.removeItem(LS_FIX); } catch {}
-    renderFixIndicator();
-    setScanStatus('Scan corrections cleared', false);
-  }
-
-  // Tracks what the last scan put in each field, so we can detect and learn
-  // from your subsequent hand-corrections. { key: scannedValue }
-  let lastScanValues = {};
-  let lastScanAt = 0;
-
-  function applyScan(result) {
-    const { indoor, outdoor } = result;
-    const filled = [];
-    const rejected = [];
-    let outdoorFromScan = false;
-    lastScanValues = {};
-    lastScanAt = Date.now();
-
-    // helper: validate → apply learned fix → set field → track
-    const place = (key, raw, kind, labelFn) => {
-      if (raw == null) return;
-      let v = Math.round(raw);
-      if (!inRange(kind, v)) { rejected.push(labelFn(v) + '?'); return; }
-      v = applyFix(key, v);              // auto-correct known recurring errors
-      setField(key, v);
-      lastScanValues[key] = v;          // remember for learn-on-edit
-      filled.push(labelFn(v));
-      return v;
-    };
-
-    place('outTemp', outdoor.temp, 'temp', v => 'out ' + v + '°');
-    const oRH = place('outRH', outdoor.rh, 'rh', v => v + '%');
-    if (lastScanValues.outTemp != null || oRH != null) outdoorFromScan = true;
-
-    place('inTemp', indoor.temp, 'temp', v => 'in ' + v + '°');
-    place('inRH', indoor.rh, 'rh', v => v + '%');
-
-    if (outdoorFromScan) {
-      // Outdoor came from a thermostat photo, not the API — drop the API dew
-      // point so render() computes from the scanned numbers instead.
-      apiOutdoor = null;
-      $('out-lbl').textContent = 'Outdoor · from thermostat';
-    }
-    render();
-    return { filled, rejected };
-  }
-
-  async function handleScanFile(e) {
-    const file = e.target.files && e.target.files[0];
-    e.target.value = '';   // allow re-picking the same file
-    if (!file) return;
-
-    const btn = $('scan-btn');
-    const orig = btn.textContent;
-
-    if (!navigator.onLine && !window.Tesseract) {
-      setScanStatus('Scan needs a connection the first time', true);
-      return;
-    }
-
-    setScanStatus('reading photo…', false);
-    btn.textContent = '···'; btn.disabled = true;
-
-    try {
-      const T = await loadTesseract();
-      const worker = await T.createWorker('eng');
-      await worker.setParameters({ tessedit_char_whitelist: '0123456789%°.' });
-      const { data } = await worker.recognize(file, {}, { blocks: true });
-      await worker.terminate();
-
-      const words = collectWords(data);
-      const result = interpretScan(words, data.text || '');
-      const { filled, rejected } = applyScan(result);
-
-      if (filled.length) {
-        let msg = 'read ' + filled.join(' · ') + ' — verify';
-        if (rejected.length) msg += ' · skipped ' + rejected.join(' ');
-        setScanStatus(msg, false);
-      } else if (rejected.length) {
-        setScanStatus('Reading looked off (' + rejected.join(' ') + ') — enter manually', true);
-      } else {
-        setScanStatus('Couldn’t read it — enter manually', true);
-      }
-    } catch {
-      setScanStatus('Scan failed — enter manually', true);
-    } finally {
-      btn.textContent = orig; btn.disabled = false;
-    }
-  }
-
   // ── Wire inputs (temp fields allow negative °F) ──
   wire(fields.outTemp, 'outTemp', fields.outRH, true);
   wire(fields.outRH,  'outRH',  fields.inTemp, false);
@@ -1051,7 +660,6 @@
     restoreLast();
     render();
     renderLog();
-    renderFixIndicator();
   });
 </script>
 
