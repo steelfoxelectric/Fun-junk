@@ -289,6 +289,7 @@
   const LS_LAST = 'ventseal_last';   // last fetched outdoor reading (for offline)
   const LS_LOG  = 'ventseal_log';    // saved reading history
   const APP_VERSION = 'v1.4.0';      // shown in the footer; bump on each release
+  const BUILD_DATE  = '2026-06-21';  // YYYY-MM-DD; update alongside APP_VERSION
 
   // Snapshot of the current computed reading, used by the History log.
   let current = { oDP:null, iDP:null, label:null, color:null };
@@ -1042,7 +1043,10 @@
 
   // ── Init ──
   window.addEventListener('load', () => {
-    $('app-version').textContent = APP_VERSION;
+    // Parse the build date as local midnight so the day can't slip a timezone.
+    const built = new Date(BUILD_DATE + 'T00:00:00')
+      .toLocaleDateString([], { month:'short', day:'numeric', year:'numeric' });
+    $('app-version').textContent = `${APP_VERSION} · ${built}`;
     renderControls();
     restoreLast();
     render();
