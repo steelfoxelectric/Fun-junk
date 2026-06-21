@@ -293,7 +293,7 @@
   const LS_KEY  = 'ventseal_home';   // saved location
   const LS_LAST = 'ventseal_last';   // last fetched outdoor reading (for offline)
   const LS_LOG  = 'ventseal_log';    // saved reading history
-  const APP_VERSION = 'v1.7.1';      // shown in the footer; bump on each release
+  const APP_VERSION = 'v1.7.2';      // shown in the footer; bump on each release
   const BUILD_DATE  = '2026-06-21';  // YYYY-MM-DD; update alongside APP_VERSION
 
   // Snapshot of the current computed reading, used by the History log.
@@ -437,6 +437,31 @@
     }
   }
 
+  // Resolve a query to { lat, lon, name }, or null if nothing matched.
+  // US ZIP codes (5 digits) go to a postal-code geocoder, since Open-Meteo's
+  // name search misreads ZIPs as place names and returns the wrong area.
+  // Throws on network failure so the caller can show a retry message.
+  async function geocode(q) {
+    if (/^\d{5}$/.test(q)) {
+      const res = await fetch(`https://api.zippopotam.us/us/${q}`);
+      if (!res.ok) return null;   // 404 = unknown ZIP
+      const data = await res.json();
+      const p = data.places && data.places[0];
+      if (!p) return null;
+      const state = p['state abbreviation'] || p.state || '';
+      return {
+        lat: parseFloat(p.latitude),
+        lon: parseFloat(p.longitude),
+        name: state ? `${p['place name']}, ${state}` : p['place name']
+      };
+    }
+    const res  = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=1&language=en&format=json`);
+    const data = await res.json();
+    if (!data.results || !data.results.length) return null;
+    const { latitude, longitude, name, admin1 } = data.results[0];
+    return { lat: latitude, lon: longitude, name: admin1 ? `${name}, ${admin1}` : name };
+  }
+
   // ── Save location ──
   async function saveLocation() {
     const li = $('loc-input');
@@ -457,21 +482,18 @@
     sb.disabled = true;
 
     try {
-      const res  = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=1&language=en&format=json`);
-      const data = await res.json();
+      const hit = await geocode(q);
 
-      if (!data.results || !data.results.length) {
+      if (!hit) {
         li.classList.add('error');
         li.value = '';
-        li.placeholder = 'Not found — try city name';
+        li.placeholder = /^\d{5}$/.test(q) ? 'ZIP not found — try city name' : 'Not found — try city or ZIP';
         sb.textContent = 'Set';
         sb.disabled = false;
         return;
       }
 
-      const { latitude, longitude, name, admin1 } = data.results[0];
-      const locName = admin1 ? `${name}, ${admin1}` : name;
-      setSaved({ lat: latitude, lon: longitude, name: locName });
+      setSaved({ lat: hit.lat, lon: hit.lon, name: hit.name });
       clearLast();
       renderControls();
       // Auto-fetch immediately after saving
