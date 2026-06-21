@@ -30,6 +30,10 @@
 
     html, body {
       min-height: 100dvh;
+      width: 100%;
+      max-width: 100%;
+      overflow-x: hidden;            /* never let stray content widen the page */
+      -webkit-text-size-adjust: 100%;
       background: var(--bg);
       color: var(--text);
       font-family: var(--sans);
@@ -293,7 +297,7 @@
   const LS_KEY  = 'ventseal_home';   // saved location
   const LS_LAST = 'ventseal_last';   // last fetched outdoor reading (for offline)
   const LS_LOG  = 'ventseal_log';    // saved reading history
-  const APP_VERSION = 'v1.7.2';      // shown in the footer; bump on each release
+  const APP_VERSION = 'v1.7.3';      // shown in the footer; bump on each release
   const BUILD_DATE  = '2026-06-21';  // YYYY-MM-DD; update alongside APP_VERSION
 
   // Snapshot of the current computed reading, used by the History log.
