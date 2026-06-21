@@ -260,6 +260,7 @@
       <div class="dp-tag">dew point</div>
     </div>
     <div class="scan-status" id="scan-status"></div>
+    <div class="hist-clear" id="fix-clear" onclick="clearFixes()" style="display:none">⌀ forget scan corrections</div>
   </div>
 
   <!-- VERDICT -->
@@ -290,6 +291,13 @@
 
   // Snapshot of the current computed reading, used by the History log.
   let current = { oDP:null, iDP:null, label:null, color:null };
+
+  // Precise outdoor dew point from the weather API (computed by Open-Meteo
+  // from full-precision values, before rounding). When the outdoor fields
+  // still hold exactly the fetched temp/RH, we prefer this over recomputing
+  // from the rounded inputs — avoids ~1° rounding drift. Cleared/ignored the
+  // moment you hand-edit an outdoor field. Shape: { temp, rh, dp }.
+  let apiOutdoor = null;
 
   const $ = id => document.getElementById(id);
   const fields = {
@@ -343,7 +351,16 @@
 
   // ── Verdict ──
   function render() {
-    const oDP=calcDP(fields.outTemp.value, fields.outRH.value);
+    // Outdoor: prefer the API's precise dew point if the fields still hold
+    // exactly what was fetched (no manual edit since). Otherwise compute.
+    let oDP;
+    if (apiOutdoor &&
+        fields.outTemp.value === String(apiOutdoor.temp) &&
+        fields.outRH.value   === String(apiOutdoor.rh)) {
+      oDP = apiOutdoor.dp;
+    } else {
+      oDP = calcDP(fields.outTemp.value, fields.outRH.value);
+    }
     const iDP=calcDP(fields.inTemp.value,  fields.inRH.value);
     setReadout('out-dp','out-sfx',oDP);
     setReadout('in-dp', 'in-sfx', iDP);
@@ -463,6 +480,7 @@
   function changeLocation() {
     clearSaved();
     clearLast();
+    apiOutdoor = null;
     fields.outTemp.value = ''; fields.outRH.value = '';
     pLen.outTemp = 0; pLen.outRH = 0;
     renderControls();
@@ -487,17 +505,26 @@
     if (btn) { btn.textContent = '···'; btn.disabled = true; }
 
     try {
-      const res  = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${loc.lat.toFixed(4)}&longitude=${loc.lon.toFixed(4)}&current=temperature_2m,relative_humidity_2m&temperature_unit=fahrenheit`);
+      const res  = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${loc.lat.toFixed(4)}&longitude=${loc.lon.toFixed(4)}&current=temperature_2m,relative_humidity_2m,dew_point_2m&temperature_unit=fahrenheit`);
       const data = await res.json();
 
-      const temp = String(Math.round(data.current.temperature_2m));
-      const rh   = String(Math.round(data.current.relative_humidity_2m));
+      const tempNum = Math.round(data.current.temperature_2m);
+      const rhNum   = Math.round(data.current.relative_humidity_2m);
+      const temp = String(tempNum);
+      const rh   = String(rhNum);
       fields.outTemp.value = temp; pLen.outTemp = temp.length;
       fields.outRH.value   = rh;  pLen.outRH   = rh.length;
 
+      // Store the API's precise dew point keyed to the rounded values shown,
+      // so render() can use it as long as the fields aren't hand-edited.
+      const apiDP = (typeof data.current.dew_point_2m === 'number')
+        ? data.current.dew_point_2m
+        : null;
+      apiOutdoor = (apiDP != null) ? { temp: tempNum, rh: rhNum, dp: apiDP } : null;
+
       const time = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
       $('out-lbl').textContent = `Outdoor · ${loc.name} · ${time}`;
-      setLast({ temp, rh, time });
+      setLast({ temp, rh, time, dp: apiDP });
 
       render();
       setTimeout(() => jump(fields.inTemp), 100);
@@ -518,6 +545,10 @@
     if (!loc || !last) return;
     fields.outTemp.value = last.temp; pLen.outTemp = String(last.temp).length;
     fields.outRH.value   = last.rh;   pLen.outRH   = String(last.rh).length;
+    // Recover the precise API dew point if we saved one with this reading.
+    if (typeof last.dp === 'number') {
+      apiOutdoor = { temp: parseInt(last.temp, 10), rh: parseInt(last.rh, 10), dp: last.dp };
+    }
     const tail = navigator.onLine ? `${last.time} (last)` : `${last.time} (offline)`;
     $('out-lbl').textContent = `Outdoor · ${loc.name} · ${tail}`;
   }
@@ -539,6 +570,22 @@
       render();
       if (go && next) setTimeout(() => jump(next), 30);
     });
+
+    // Learn-on-edit: if you hand-correct a field within 30s of a scan, and
+    // the corrected value differs from what the scan put there, remember it
+    // so the same OCR mistake auto-fixes next time.
+    input.addEventListener('change', () => {
+      const scanned = lastScanValues[key];
+      if (scanned == null) return;
+      if (Date.now() - lastScanAt > 30000) return;   // only just after a scan
+      const corrected = parseInt(input.value, 10);
+      if (isNaN(corrected)) return;
+      if (corrected !== scanned) {
+        learnFix(key, scanned, corrected);
+        // Stop tracking this field so we don't double-learn from further edits.
+        delete lastScanValues[key];
+      }
+    });
   }
 
   // ── Clear readings only (keep location) ──
@@ -546,6 +593,8 @@
     Object.values(fields).forEach(f => f.value = '');
     Object.keys(pLen).forEach(k => pLen[k] = 0);
     clearLast();
+    apiOutdoor = null;
+    lastScanValues = {};   // forget the in-flight scan so a Clear can't mis-learn
     const loc = getSaved();
     if (loc) $('out-lbl').textContent = `Outdoor · ${loc.name}`;
     render();
@@ -667,6 +716,8 @@
   }
 
   // Turn recognised words into numeric tokens with layout metadata.
+  // We capture cx (horizontal centre) because the Honeywell screen lays
+  // OUTDOOR and INDOOR out side-by-side (left/right), not stacked.
   function scanTokens(words) {
     const toks = [];
     words.forEach(w => {
@@ -680,13 +731,54 @@
         val,
         pct: /%/.test(text),
         h:  bb.y1 - bb.y0,         // font size proxy
+        cx: (bb.x0 + bb.x1) / 2,   // horizontal position
         cy: (bb.y0 + bb.y1) / 2    // vertical position
       });
     });
     return toks;
   }
 
-  // From a vertical band of tokens, pick a temperature (big font) + humidity.
+  // Stitch split digits back together. The huge temp numerals on the
+  // thermostat frequently OCR as two separate single-digit tokens
+  // (e.g. "66" → "6" "6", or "42" → "4" "2"). We merge single-digit
+  // tokens that sit on the same row, close together, at a similar height
+  // *to each other* (not relative to the screen's biggest font, so it
+  // works for the medium-font outdoor temp as well as the giant indoor one).
+  function mergeSplitDigits(toks) {
+    const singles = toks.filter(t => !t.pct && t.val >= 0 && t.val <= 9);
+    const rest    = toks.filter(t => !(!t.pct && t.val >= 0 && t.val <= 9));
+    const used = new Set();
+    const order = singles
+      .map((t, i) => i)
+      .sort((a, b) => (Math.round(singles[a].cy/40) - Math.round(singles[b].cy/40)) || (singles[a].cx - singles[b].cx));
+    const merged = [];
+    for (const i of order) {
+      if (used.has(i)) continue;
+      const cur = { ...singles[i] };
+      used.add(i);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const j of order) {
+          if (used.has(j)) continue;
+          const o = singles[j];
+          const sameRow  = Math.abs(o.cy - cur.cy) <= cur.h * 0.5;
+          const closeX   = (o.cx - cur.cx) > 0 && (o.cx - cur.cx) <= cur.h * 1.5;
+          const similarH = Math.abs(o.h - cur.h) <= Math.max(cur.h, o.h) * 0.30;
+          if (sameRow && closeX && similarH) {
+            cur.val = parseInt(String(Math.trunc(cur.val)) + String(Math.trunc(o.val)), 10);
+            cur.cx  = (cur.cx + o.cx) / 2;
+            used.add(j);
+            changed = true;
+          }
+        }
+      }
+      merged.push(cur);
+    }
+    return rest.concat(merged);
+  }
+
+  // From a column of tokens, pick a temperature (biggest font) + humidity.
   function classifyBand(group, medH) {
     let temp = null, rh = null;
     const nonPct = group.filter(t => !t.pct);
@@ -718,25 +810,57 @@
     return { indoor: { temp, rh }, outdoor: { temp:null, rh:null } };
   }
 
-  // Layout-aware interpretation: top band = indoor, bottom band = outdoor.
+  // Font size of the biggest temperature in a group (0 if none) — used to
+  // tell which cluster is the prominent (indoor) reading.
+  function bandTempHeight(group) {
+    const c = group.filter(t => !t.pct && t.val >= -60 && t.val <= 130)
+                   .sort((a, b) => b.h - a.h);
+    return c.length ? c[0].h : 0;
+  }
+
+  // Layout-aware interpretation that adapts to the display's orientation.
+  // We split the numbers into two clusters along whichever axis they spread
+  // across more (side-by-side screens spread in X, stacked ones in Y), then
+  // only treat it as a two-zone reading if BOTH clusters actually contain a
+  // temperature — otherwise it's a single zone (temp + humidity) and we keep
+  // it whole. Indoor is the cluster whose temperature is the larger font (the
+  // prominent reading, e.g. the giant center number on a Honeywell); the
+  // other cluster is outdoor. This avoids hardcoding left/right or top/bottom.
   function interpretScan(words, rawText) {
-    const toks = scanTokens(words);
+    let toks = scanTokens(words);
     if (toks.length) {
-      const ys = toks.map(t => t.cy);
-      const midY = (Math.min(...ys) + Math.max(...ys)) / 2;
+      toks = mergeSplitDigits(toks);
+
       const hs = toks.map(t => t.h).sort((a, b) => a - b);
       const medH = hs[Math.floor(hs.length / 2)] || 0;
 
-      const top = toks.filter(t => t.cy <= midY);
-      const bot = toks.filter(t => t.cy >  midY);
+      const xs = toks.map(t => t.cx), ys = toks.map(t => t.cy);
+      const xSpread = Math.max(...xs) - Math.min(...xs);
+      const ySpread = Math.max(...ys) - Math.min(...ys);
+      const axis = xSpread >= ySpread ? 'cx' : 'cy';
+      const vals = toks.map(t => t[axis]);
+      const mid  = (Math.min(...vals) + Math.max(...vals)) / 2;
 
-      if (top.length && bot.length) {
-        const indoor  = classifyBand(top, medH);
-        const outdoor = classifyBand(bot, medH);
+      const a = toks.filter(t => t[axis] <= mid);
+      const b = toks.filter(t => t[axis] >  mid);
+
+      // Genuine two-zone only if both clusters have their own temperature.
+      const tA = bandTempHeight(a), tB = bandTempHeight(b);
+      if (a.length && b.length && tA > 0 && tB > 0) {
+        const ca = classifyBand(a, medH);
+        const cb = classifyBand(b, medH);
+        // Prefer the larger-font temperature as indoor. When the two fonts are
+        // ~equal (no size cue), fall back to layout convention: on a stacked
+        // display the top zone is indoor; on a side-by-side one, the right.
+        const tie = Math.abs(tA - tB) <= Math.max(tA, tB) * 0.15;
+        const indoorIsB = tie ? (axis === 'cx') : (tB > tA);
+        const indoor  = indoorIsB ? cb : ca;
+        const outdoor = indoorIsB ? ca : cb;
         if (indoor.temp != null || indoor.rh != null || outdoor.temp != null || outdoor.rh != null)
           return { indoor, outdoor };
       }
-      // Fall back to a single indoor reading from all tokens.
+
+      // Single zone — classify everything together as the indoor reading.
       const single = classifyBand(toks, medH);
       if (single.temp != null || single.rh != null)
         return { indoor: single, outdoor: { temp:null, rh:null } };
@@ -751,17 +875,119 @@
     pLen[key] = String(num).length;
   }
 
+  // ── Range sanity bounds ───────────────────────────────────────────────
+  // Hard physical/plausibility limits. A scanned value outside these is
+  // almost certainly an OCR error (e.g. a giant "66" read as "6", or a
+  // stray time digit), so we reject it rather than silently logging junk.
+  const RANGE = {
+    temp: { min: -20, max: 120 },   // °F, generous for indoor+outdoor
+    rh:   { min: 1,   max: 100 }    // %
+  };
+  function inRange(kind, v) {
+    const r = RANGE[kind];
+    return v != null && v >= r.min && v <= r.max;
+  }
+
+  // ── Correction memory ─────────────────────────────────────────────────
+  // A lookup table of *your* recurring OCR errors, keyed per field. When a
+  // scan fills a field and you then hand-correct it shortly after, we save
+  // "scan said X in this field → you meant Y". Next time the scan produces
+  // X in that field, we auto-apply Y. This is not machine learning — it's a
+  // transparent memory of your specific repeat mistakes. Clearable.
+  const LS_FIX = 'ventseal_fixes';
+  function getFixes() {
+    try { return JSON.parse(localStorage.getItem(LS_FIX)) || {}; } catch { return {}; }
+  }
+  function setFixes(obj) {
+    try { localStorage.setItem(LS_FIX, JSON.stringify(obj)); } catch {}
+  }
+  // Apply a learned correction for a given field+value, if one exists.
+  function applyFix(key, val) {
+    if (val == null) return val;
+    const fixes = getFixes();
+    const k = key + ':' + Math.round(val);
+    const rec = fixes[k];
+    // Require the correction to have been seen at least twice to trust it,
+    // so a one-off typo doesn't poison future scans.
+    if (rec && rec.count >= 2) return rec.to;
+    return val;
+  }
+  // Record that, in this field, a scanned value was corrected to another.
+  function learnFix(key, fromVal, toVal) {
+    if (fromVal == null || toVal == null || fromVal === toVal) return;
+    const fixes = getFixes();
+    const k = key + ':' + fromVal;
+    // Drop any opposing rule (toVal → fromVal) so the two can't oscillate.
+    const reverse = key + ':' + toVal;
+    if (fixes[reverse] && fixes[reverse].to === fromVal) delete fixes[reverse];
+    const rec = fixes[k];
+    if (rec && rec.to === toVal) rec.count = Math.min((rec.count || 1) + 1, 9);
+    else fixes[k] = { to: toVal, count: 1 };
+    setFixes(fixes);
+    renderFixIndicator();
+  }
+
+  // Show/hide the "forget corrections" control based on how many active
+  // (trusted, count>=2) corrections exist.
+  function renderFixIndicator() {
+    const el = $('fix-clear');
+    if (!el) return;
+    const fixes = getFixes();
+    const active = Object.values(fixes).filter(r => r.count >= 2).length;
+    if (active > 0) {
+      el.style.display = 'block';
+      el.textContent = `⌀ forget scan corrections (${active})`;
+    } else {
+      el.style.display = 'none';
+    }
+  }
+
+  function clearFixes() {
+    try { localStorage.removeItem(LS_FIX); } catch {}
+    renderFixIndicator();
+    setScanStatus('Scan corrections cleared', false);
+  }
+
+  // Tracks what the last scan put in each field, so we can detect and learn
+  // from your subsequent hand-corrections. { key: scannedValue }
+  let lastScanValues = {};
+  let lastScanAt = 0;
+
   function applyScan(result) {
     const { indoor, outdoor } = result;
     const filled = [];
+    const rejected = [];
     let outdoorFromScan = false;
-    if (indoor.temp != null) { setField('inTemp', Math.round(indoor.temp)); filled.push('in ' + Math.round(indoor.temp) + '°'); }
-    if (indoor.rh   != null) { setField('inRH',   Math.round(indoor.rh));   filled.push(Math.round(indoor.rh) + '%'); }
-    if (outdoor.temp != null) { setField('outTemp', Math.round(outdoor.temp)); filled.push('out ' + Math.round(outdoor.temp) + '°'); outdoorFromScan = true; }
-    if (outdoor.rh   != null) { setField('outRH',   Math.round(outdoor.rh));   outdoorFromScan = true; }
-    if (outdoorFromScan) $('out-lbl').textContent = 'Outdoor · from thermostat';
+    lastScanValues = {};
+    lastScanAt = Date.now();
+
+    // helper: validate → apply learned fix → set field → track
+    const place = (key, raw, kind, labelFn) => {
+      if (raw == null) return;
+      let v = Math.round(raw);
+      if (!inRange(kind, v)) { rejected.push(labelFn(v) + '?'); return; }
+      v = applyFix(key, v);              // auto-correct known recurring errors
+      setField(key, v);
+      lastScanValues[key] = v;          // remember for learn-on-edit
+      filled.push(labelFn(v));
+      return v;
+    };
+
+    place('outTemp', outdoor.temp, 'temp', v => 'out ' + v + '°');
+    const oRH = place('outRH', outdoor.rh, 'rh', v => v + '%');
+    if (lastScanValues.outTemp != null || oRH != null) outdoorFromScan = true;
+
+    place('inTemp', indoor.temp, 'temp', v => 'in ' + v + '°');
+    place('inRH', indoor.rh, 'rh', v => v + '%');
+
+    if (outdoorFromScan) {
+      // Outdoor came from a thermostat photo, not the API — drop the API dew
+      // point so render() computes from the scanned numbers instead.
+      apiOutdoor = null;
+      $('out-lbl').textContent = 'Outdoor · from thermostat';
+    }
     render();
-    return filled;
+    return { filled, rejected };
   }
 
   async function handleScanFile(e) {
@@ -789,10 +1015,17 @@
 
       const words = collectWords(data);
       const result = interpretScan(words, data.text || '');
-      const filled = applyScan(result);
+      const { filled, rejected } = applyScan(result);
 
-      if (filled.length) setScanStatus('read ' + filled.join(' · ') + ' — verify', false);
-      else               setScanStatus('Couldn’t read it — enter manually', true);
+      if (filled.length) {
+        let msg = 'read ' + filled.join(' · ') + ' — verify';
+        if (rejected.length) msg += ' · skipped ' + rejected.join(' ');
+        setScanStatus(msg, false);
+      } else if (rejected.length) {
+        setScanStatus('Reading looked off (' + rejected.join(' ') + ') — enter manually', true);
+      } else {
+        setScanStatus('Couldn’t read it — enter manually', true);
+      }
     } catch {
       setScanStatus('Scan failed — enter manually', true);
     } finally {
@@ -812,6 +1045,7 @@
     restoreLast();
     render();
     renderLog();
+    renderFixIndicator();
   });
 </script>
 
