@@ -156,11 +156,19 @@
     }
     .hist-empty { font-size: 12px; color: var(--muted); text-align: center; padding: 6px 0; }
     .hist-row {
-      display: flex; align-items: center; justify-content: space-between;
+      display: flex; align-items: flex-start; justify-content: space-between;
       gap: 10px; padding: 9px 0; border-top: 1px solid var(--border);
     }
     .hist-row:first-child { border-top: none; }
-    .hist-main  { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .hist-main  { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; cursor: pointer; }
+    .hist-main:active { opacity: .7; }
+    .hist-row.expanded .hist-label { letter-spacing: 0; }
+
+    /* expandable detail */
+    .hist-detail { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); display: grid; gap: 5px; }
+    .dl-row { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; }
+    .dl-k { color: var(--muted); letter-spacing: .04em; white-space: nowrap; }
+    .dl-v { color: var(--text); font-family: var(--mono); text-align: right; }
     .hist-label { font-size: 13px; font-weight: 700; letter-spacing: -.01em; }
     .hist-date  { font-size: 10px; color: var(--muted); letter-spacing: .04em; }
     .hist-vals  { font-size: 11px; color: var(--text); font-family: var(--mono); }
@@ -284,7 +292,7 @@
   const LS_KEY  = 'ventseal_home';   // saved location
   const LS_LAST = 'ventseal_last';   // last fetched outdoor reading (for offline)
   const LS_LOG  = 'ventseal_log';    // saved reading history
-  const APP_VERSION = 'v1.6.0';      // shown in the footer; bump on each release
+  const APP_VERSION = 'v1.7.0';      // shown in the footer; bump on each release
   const BUILD_DATE  = '2026-06-21';  // YYYY-MM-DD; update alongside APP_VERSION
 
   // Snapshot of the current computed reading, used by the History log.
@@ -619,7 +627,10 @@
       t: now,
       label: current.label,
       color: current.color,
-      oDP, iDP, place
+      oDP, iDP, place,
+      // Raw inputs behind the reading, for the expandable detail view.
+      oT: fields.outTemp.value, oH: fields.outRH.value,
+      iT: fields.inTemp.value,  iH: fields.inRH.value
     };
 
     if (top && top.place === place && (now - top.t) < COALESCE_MS) {
@@ -707,6 +718,42 @@
       </div>`;
   }
 
+  // Minimal HTML escape for any user/API-sourced text (e.g. place names).
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, c =>
+      ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+  }
+
+  // Expanded detail for one entry: the full breakdown behind the reading.
+  function logDetailHTML(e) {
+    const rows = [];
+    const zone = (lbl, t, h, dp) => {
+      const parts = [];
+      if (t != null && t !== '') parts.push(`${esc(t)}°F`);
+      if (h != null && h !== '') parts.push(`${esc(h)}% RH`);
+      const lhs = parts.length ? parts.join(' · ') + ' → ' : '';
+      return `<div class="dl-row"><span class="dl-k">${lbl}</span><span class="dl-v">${lhs}${dp}° dp</span></div>`;
+    };
+    rows.push(zone('Outdoor', e.oT, e.oH, e.oDP));
+    rows.push(zone('Indoor',  e.iT, e.iH, e.iDP));
+    const d = +(e.oDP - e.iDP).toFixed(1);
+    const diff = d === 0 ? 'equal'
+      : d < 0 ? `outdoor ${Math.abs(d).toFixed(1)}° drier`
+              : `outdoor ${d.toFixed(1)}° wetter`;
+    rows.push(`<div class="dl-row"><span class="dl-k">Difference</span><span class="dl-v">${diff}</span></div>`);
+    const when = new Date(e.t).toLocaleString([],
+      { weekday:'short', month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
+    rows.push(`<div class="dl-row"><span class="dl-k">When</span><span class="dl-v">${when}</span></div>`);
+    if (e.place) rows.push(`<div class="dl-row"><span class="dl-k">Place</span><span class="dl-v">${esc(e.place)}</span></div>`);
+    return `<div class="hist-detail">${rows.join('')}</div>`;
+  }
+
+  let expandedLogId = null;
+  function toggleLogDetail(id) {
+    expandedLogId = (expandedLogId === id) ? null : id;
+    renderLog();
+  }
+
   function renderLog() {
     const log = getLog();
     const list = $('hist-list');
@@ -719,15 +766,19 @@
       return;
     }
     clear.style.display = 'block';
-    list.innerHTML = log.map(e => `
-      <div class="hist-row">
-        <div class="hist-main">
+    list.innerHTML = log.map(e => {
+      const open = e.id === expandedLogId;
+      return `
+      <div class="hist-row${open ? ' expanded' : ''}">
+        <div class="hist-main" onclick="toggleLogDetail('${e.id}')">
           <span class="hist-label" style="color:${e.color || TX}">${e.label || ''}</span>
           <span class="hist-date">${fmtLogDate(e.t)}</span>
-          <span class="hist-vals">Out ${e.oDP}° / In ${e.iDP}°${e.place ? ' · ' + e.place : ''}</span>
+          <span class="hist-vals">Out ${e.oDP}° / In ${e.iDP}°${e.place ? ' · ' + esc(e.place) : ''}</span>
+          ${open ? logDetailHTML(e) : ''}
         </div>
         <button class="hist-del" onclick="deleteLogEntry('${e.id}')" aria-label="delete reading">×</button>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   }
 
   // ── Wire inputs (temp fields allow negative °F) ──
