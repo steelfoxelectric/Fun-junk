@@ -9,6 +9,7 @@ is just adding a new folder — no extra configuration.
 ```
 /                 → landing page linking to each project
 /vent/            → "Vent or Seal?" dew-point tool (installable PWA)
+/mileslip/        → "Mile·Slip" daily work-code mileage tracker
 ```
 
 ## Projects
@@ -23,6 +24,15 @@ enough to ventilate, or whether you should keep the house sealed.
   caches the app shell so the tool opens offline and shows the last fetched
   reading. Live weather still requires a connection; fetch failures degrade
   gracefully to manual entry.
+
+### Mile·Slip — `/mileslip/`
+A daily mileage logger for field work. Pick the codes worked that day, assign a
+town to each driving code, and it builds the route between job sites and tallies
+miles. Per-leg distances are entered once and reused as the saved audit number.
+Produces a copyable daily slip of codes and route.
+
+- Plain HTML/CSS/JS, no build step, no dependencies.
+- All data is kept locally in `localStorage` (nothing leaves the device).
 
 ## Deploy (Netlify, git-based)
 

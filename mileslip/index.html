@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#16140F">
+<title>Mile Slip</title>
+<style>
+  :root{
+    --asphalt:#16140F; --panel:#201D16; --panel2:#272318;
+    --line:#322D21; --text:#F4EFE3; --muted:#9A958A;
+    --lane:#F4C542; --lane-dim:#7d6a2e; --danger:#c46a4a; --ok:#7fae6a;
+    --radius:14px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--asphalt);color:var(--text);
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-text-size-adjust:100%}
+  body{padding:max(14px,env(safe-area-inset-top)) 14px calc(30px + env(safe-area-inset-bottom));
+    max-width:540px;margin:0 auto}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .tnum{font-variant-numeric:tabular-nums}
+
+  header{display:flex;align-items:baseline;justify-content:space-between;
+    border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:16px}
+  .brand{font-weight:800;letter-spacing:.16em;text-transform:uppercase;font-size:20px}
+  .brand b{color:var(--lane)}
+  .date{font-size:12px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase}
+  .eyebrow{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);
+    margin:18px 0 8px 2px}
+  .eyebrow:first-of-type{margin-top:0}
+
+  .anchors{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .anchor{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    padding:12px;text-align:left;cursor:pointer;color:var(--text);min-height:58px}
+  .anchor:focus-visible{outline:2px solid var(--lane);outline-offset:2px}
+  .anchor.sel{background:var(--lane);color:#1a1710;border-color:var(--lane)}
+  .anchor .k{font-weight:800;letter-spacing:.1em;text-transform:uppercase;font-size:14px}
+  .anchor .a{font-size:11px;opacity:.85;margin-top:3px;display:block;line-height:1.3}
+  .addr-edit{font-size:11px;color:var(--muted);margin:6px 2px 0;text-align:right}
+  .addr-edit button{background:none;border:none;color:var(--lane);font:inherit;cursor:pointer;
+    text-decoration:underline;padding:2px}
+
+  /* search / picker */
+  .searchwrap{position:relative}
+  .searchwrap input{width:100%;background:var(--panel);border:1px solid var(--line);color:var(--text);
+    border-radius:12px;padding:13px 14px;font:inherit;font-size:16px}
+  .searchwrap input:focus{outline:2px solid var(--lane);outline-offset:1px;border-color:var(--lane)}
+  .picker{margin-top:8px;border:1px solid var(--line);border-radius:12px;overflow:hidden;
+    max-height:320px;overflow-y:auto;display:none;background:var(--panel)}
+  .picker.on{display:block}
+  .pgroup{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);
+    background:var(--panel2);padding:6px 12px;position:sticky;top:0}
+  .presult{display:flex;align-items:center;justify-content:space-between;gap:10px;
+    padding:11px 12px;border-top:1px solid var(--line);cursor:pointer}
+  .presult:active{background:var(--panel2)}
+  .presult .nm{font-weight:600;font-size:15px}
+  .presult .tag{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);
+    border:1px solid var(--line);border-radius:6px;padding:2px 6px;white-space:nowrap}
+  .presult .tag.admin{color:var(--lane-dim)}
+  .chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
+  .chip{background:var(--panel);border:1px solid var(--line);color:var(--text);
+    border-radius:999px;padding:8px 13px;font:inherit;font-size:13px;cursor:pointer}
+  .chip:active{background:var(--panel2)}
+  .chip:focus-visible{outline:2px solid var(--lane);outline-offset:1px}
+  .chip.none{color:var(--muted);border-style:dashed;cursor:default}
+
+  /* codes worked */
+  .code{display:flex;align-items:center;gap:10px;background:var(--panel);
+    border:1px solid var(--line);border-radius:12px;padding:11px 12px;margin-bottom:8px}
+  .code .body{flex:1;min-width:0;cursor:pointer}
+  .code .nm{font-weight:700;font-size:15px}
+  .code .sub{font-size:12px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis}
+  .code .sub.warn{color:var(--danger)}
+  .code .sub b{color:var(--lane);font-weight:700}
+  .code .ord{display:flex;flex-direction:column;gap:2px}
+  .code .ord button,.code .rm{background:none;border:1px solid var(--line);color:var(--muted);
+    border-radius:8px;width:30px;height:26px;font-size:13px;cursor:pointer;line-height:1}
+  .code .rm{height:54px;width:34px;font-size:15px}
+  .code button:focus-visible{outline:2px solid var(--lane);outline-offset:1px}
+  .empty{color:var(--muted);font-size:14px;padding:6px 2px 4px;line-height:1.5}
+
+  /* route / road */
+  .total{margin-top:8px;background:linear-gradient(180deg,var(--panel),var(--panel2));
+    border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px}
+  .total .top{display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
+  .total .lab{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+  .total .num{font-size:46px;font-weight:800;line-height:.95;color:var(--lane);
+    text-shadow:0 0 18px rgba(244,197,66,.18)}
+  .total .num small{font-size:16px;color:var(--muted);font-weight:700;margin-left:4px}
+  .total .flag{font-size:12px;color:var(--danger);margin-top:8px}
+  .copy{background:none;border:1px solid var(--lane);color:var(--lane);border-radius:11px;
+    padding:11px 15px;font:inherit;font-weight:700;cursor:pointer;white-space:nowrap}
+  .copy:active{background:rgba(244,197,66,.1)}
+  .copy:focus-visible{outline:2px solid var(--lane);outline-offset:2px}
+
+  .road{margin-top:14px;border-top:1px dashed var(--line);padding-top:12px}
+  .rnode{position:relative;display:flex;align-items:center;padding-left:26px;min-height:34px}
+  .rnode .dot{position:absolute;left:3px;top:9px;width:13px;height:13px;border-radius:50%;
+    background:var(--panel);border:3px solid var(--lane)}
+  .rnode.anchor .dot{background:var(--lane)}
+  .rnode .nm{font-weight:600;font-size:15px}
+  .rleg{position:relative;padding-left:26px;min-height:30px;display:flex;align-items:center}
+  .rleg::before{content:"";position:absolute;left:8px;top:-3px;bottom:-3px;width:2px;
+    background:repeating-linear-gradient(var(--lane) 0 6px,transparent 6px 12px)}
+  .rleg.unknown::before{background:repeating-linear-gradient(var(--lane-dim) 0 6px,transparent 6px 12px)}
+  .rleg button{background:var(--panel);border:1px solid var(--line);color:var(--text);
+    border-radius:8px;padding:4px 10px;font:inherit;font-size:12px;cursor:pointer}
+  .rleg button:focus-visible{outline:2px solid var(--lane);outline-offset:2px}
+  .rleg .mi{font-weight:800;color:var(--lane)}
+  .rleg.unknown button{border-style:dashed;border-color:var(--lane-dim);color:var(--muted)}
+
+  .footer{display:flex;justify-content:space-between;margin-top:18px}
+  .footer button{background:none;border:none;color:var(--muted);font:inherit;font-size:12px;
+    letter-spacing:.06em;text-transform:uppercase;cursor:pointer;text-decoration:underline;
+    text-underline-offset:3px;padding:6px}
+  .footer button:focus-visible{outline:2px solid var(--lane);outline-offset:2px;border-radius:4px}
+
+  /* bottom sheet */
+  .scrim{position:fixed;inset:0;background:rgba(0,0,0,.62);display:none;align-items:flex-end;z-index:50}
+  .scrim.on{display:flex}
+  .sheet{background:var(--asphalt);border-top:2px solid var(--lane);width:100%;max-width:540px;
+    margin:0 auto;border-radius:18px 18px 0 0;padding:18px 18px calc(20px + env(safe-area-inset-bottom));
+    max-height:86vh;overflow-y:auto}
+  .sheet h3{margin:0 0 2px;font-size:16px}
+  .sheet .route-lbl{color:var(--lane);font-weight:800;margin:0 0 4px}
+  .sheet .hint{color:var(--muted);font-size:12px;margin:4px 0 14px;line-height:1.5}
+  .kv{font-size:12px;color:var(--muted);line-height:1.7;margin:0 0 14px}
+  .kv span{color:var(--text)}
+  .milerow{display:flex;gap:10px;align-items:center}
+  .milerow input{flex:1;background:var(--panel);border:1px solid var(--line);color:var(--text);
+    border-radius:12px;padding:15px;font:inherit;font-size:24px;font-weight:800;text-align:center}
+  .milerow input:focus{outline:2px solid var(--lane);border-color:var(--lane)}
+  .milerow .unit{color:var(--muted);font-weight:700}
+  .revchip{margin-top:12px;width:100%;background:var(--panel);border:1px dashed var(--line);
+    color:var(--text);border-radius:11px;padding:11px;font:inherit;font-size:13px;cursor:pointer}
+  .placepick{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 10px}
+  .placepick .chip.sel{background:var(--lane);color:#1a1710;border-color:var(--lane)}
+  .newplace{display:flex;gap:8px;margin-bottom:8px}
+  .newplace input{flex:1;background:var(--panel);border:1px solid var(--line);color:var(--text);
+    border-radius:11px;padding:12px;font:inherit;font-size:15px}
+  .newplace input:focus{outline:2px solid var(--lane);border-color:var(--lane)}
+  .newplace button{background:var(--panel2);border:1px solid var(--line);color:var(--text);
+    border-radius:11px;padding:0 16px;font:inherit;cursor:pointer}
+  .acts{display:flex;gap:10px;margin-top:14px}
+  .acts button{flex:1;border-radius:12px;padding:14px;font:inherit;font-weight:800;cursor:pointer;font-size:15px}
+  .btn-save{background:var(--lane);color:#1a1710;border:none}
+  .btn-cancel{background:none;border:1px solid var(--line);color:var(--text)}
+  .btn-del{background:none;border:1px solid var(--danger);color:var(--danger);flex:0 0 auto;padding:14px 16px}
+
+  .toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));
+    transform:translateX(-50%) translateY(20px);background:var(--lane);color:#1a1710;
+    font-weight:700;padding:11px 18px;border-radius:999px;opacity:0;transition:.22s;
+    pointer-events:none;z-index:60;font-size:14px}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  @media (prefers-reduced-motion:reduce){.toast{transition:none}}
+</style>
+</head>
+<body>
+  <header>
+    <div class="brand">Mile<b>&middot;</b>Slip</div>
+    <div class="date mono" id="today"></div>
+  </header>
+
+  <p class="eyebrow">Start &amp; end</p>
+  <div class="anchors">
+    <button class="anchor" data-anchor="home"></button>
+    <button class="anchor" data-anchor="office"></button>
+  </div>
+  <div class="addr-edit"><button id="editAddr">Edit addresses</button></div>
+
+  <p class="eyebrow">Add a job</p>
+  <div class="searchwrap">
+    <input id="search" placeholder="Search jobs or admin codes" autocomplete="off" enterkeyhint="search">
+    <div class="picker" id="picker"></div>
+  </div>
+  <div class="chips" id="recents"></div>
+
+  <p class="eyebrow">Codes worked today</p>
+  <div id="codes"></div>
+
+  <div class="total">
+    <div class="top">
+      <div>
+        <div class="lab">Today's miles</div>
+        <div class="num tnum"><span id="totalNum">0.0</span><small>mi</small></div>
+      </div>
+      <button class="copy" id="copyBtn">Copy</button>
+    </div>
+    <div class="flag" id="flag"></div>
+    <div class="road" id="road"></div>
+  </div>
+
+  <div class="footer">
+    <button id="clearDay">Clear today</button>
+    <button id="manage">Manage places</button>
+  </div>
+
+  <div class="scrim" id="scrim"><div class="sheet" id="sheet" role="dialog" aria-modal="true"></div></div>
+  <div class="toast" id="toast"></div>
+
+<script>
+const JOBS = [{"name":"Annual","cc":"-","wbs":"-","ro":"","fund":"","type":"A","drives":false},{"name":"Sick","cc":"-","wbs":"-","ro":"","fund":"","type":"S","drives":false},{"name":"Overhead","cc":"7840201000","wbs":"","ro":"89414","fund":"1058100379","type":"RT","drives":false},{"name":"District Design Support","cc":"7840201000","wbs":"","ro":"89412","fund":"1058100379","type":"RT","drives":false},{"name":"Training","cc":"7840201000","wbs":"","ro":"89812","fund":"1058100379","type":"RT","drives":false},{"name":"Training APC","cc":"7840201000","wbs":"","ro":"89812","fund":"1058100319","type":"RT","drives":false},{"name":"Training APC Technical Meetings","cc":"7840201000","wbs":"","ro":"89812","fund":"1058200719","type":"RT","drives":false},{"name":"Out of Service Training","cc":"7840201000","wbs":"","ro":"89836","fund":"1058100379","type":"RT","drives":false},{"name":"Centre 26/N41","cc":"7840210000","wbs":"P-800026T7N41-0210-373-1","ro":"89401","fund":"1058100373","type":"RT","drives":true},{"name":"Centre 99/CRP","cc":"7840210000","wbs":"P-100099T7CRP-0210-373-1","ro":"89401","fund":"1058100373","type":"RT","drives":true},{"name":"Centre 99/166","cc":"7840210000","wbs":"P-100099T7166-0210-373-1","ro":"89401","fund":"1058100373","type":"RT","drives":true},{"name":"Centre 2005/A01","cc":"7840210000","wbs":"P-00200507A01-0210-373-1","ro":"89401","fund":"1058100373","type":"RT","drives":true},{"name":"Centre 3014/153","cc":"7840210000","wbs":"P-50301407153-0210-373-1","ro":"89401","fund":"1058100373","type":"RT","drives":true},{"name":"Centre 2-25-ST1","cc":"7840210000","wbs":"P-6GRP2508ST1-0210-711-2","ro":"89401","fund":"1058200711","type":"RT","drives":true},{"name":"Centre County - Office","cc":"7840210000","wbs":"","ro":"89829","fund":"1058200719","type":"RT","drives":false},{"name":"Centre County - Field","cc":"7840210000","wbs":"","ro":"89890","fund":"1058200719","type":"RT","drives":false},{"name":"Clinton 2-25-ST3","cc":"7840230000","wbs":"P-6GRP2508ST3-0230-711-2","ro":"89401","fund":"1058200711","type":"RT","drives":true},{"name":"Clinton 2-24-CPP","cc":"7840230000","wbs":"P-700220T7327-0230-373-1","ro":"89401","fund":"1058100373","type":"RT","drives":true},{"name":"Mifflin 22/A15","cc":"7840270000","wbs":"P-20002207A15-0270-362-1","ro":"89401","fund":"2618500362","type":"RT","drives":true},{"name":"Mifflin 22/A18","cc":"7840270000","wbs":"P-20002207A18-0270-362-1","ro":"89401","fund":"2618500362","type":"RT","drives":true},{"name":"Mifflin 522/A04","cc":"7840270000","wbs":"P-200522T7A04-0270-362-1","ro":"89401","fund":"2618500362","type":"RT","drives":true},{"name":"Mifflin 22/C05","cc":"7840270000","wbs":"P-20002207C05-0270-371-2","ro":"89401","fund":"1058100371","type":"RT","drives":true},{"name":"Mifflin 522/723","cc":"7840270000","wbs":"P-500522T7723-0270-373-1","ro":"89401","fund":"1058100373","type":"RT","drives":true},{"name":"Mifflin 2001/A04 DFB 2023","cc":"7840270000","wbs":"P-80200107A04-0270-361-2","ro":"89401","fund":"2618500361","type":"RT","drives":true},{"name":"Mifflin 2004/A04","cc":"7840270000","wbs":"P-80200407A04-0270-361-2","ro":"89401","fund":"2618500361","type":"RT","drives":true},{"name":"Mifflin 2/25/ST9","cc":"7840270000","wbs":"P-6GRP2508ST7-0270-701-2","ro":"89401","fund":"2640900701","type":"RT","drives":true},{"name":"Mifflin 2/25/ST72","cc":"7840270000","wbs":"P-20800808000-0270-371-2","ro":"89401","fund":"1058100371","type":"RT","drives":true},{"name":"Juniata 22/CMB","cc":"7840290000","wbs":"P-20002207CMB-0290-373-1","ro":"89401","fund":"1058100373","type":"RT","drives":true},{"name":"Juniata 22/P41","cc":"7840290000","wbs":"P-200022T7P41-0290-362-1","ro":"89401","fund":"2618500362","type":"RT","drives":true},{"name":"Juniata 22/P54","cc":"7840290000","wbs":"P-20002207P54-0290-361-2","ro":"89401","fund":"2618500361","type":"RT","drives":true},{"name":"Juniata 22/P63","cc":"7840290000","wbs":"P-200022T7P63-0290-362-1","ro":"89401","fund":"2618500362","type":"RT","drives":true},{"name":"Juniata 35/912","cc":"7840290000","wbs":"P-800035T7912-0290-373-1","ro":"89401","fund":"1058100373","type":"RT","drives":true},{"name":"Juniata 333/A10","cc":"7840290000","wbs":"P-90033307A10-0290-361-2","ro":"89401","fund":"2618500361","type":"RT","drives":true},{"name":"Juniata 2006/P44","cc":"7840290000","wbs":"P-902006T7P44-0290-362-1","ro":"89401","fund":"2618500362","type":"RT","drives":true},{"name":"Juniata 3008/A03","cc":"7840290000","wbs":"P-90300807A03-0290-361-2","ro":"89401","fund":"2618500361","type":"RT","drives":true},{"name":"Juniata 2-24-ST92","cc":"7840290000","wbs":"P-20002207ST9-0290-371-2","ro":"89401","fund":"1058100371","type":"RT","drives":true},{"name":"Juniata 2/25/ST9","cc":"7840290000","wbs":"P-80003507ST9-0290-371-2","ro":"89401","fund":"1058200711","type":"RT","drives":true},{"name":"OPO","cc":"7844001002","wbs":"","ro":"89890","fund":"1058200719","type":"RT","drives":false}];
+const LS_KEY = "mileslip.v2";
+const DEFAULTS = {
+  anchor:"home",
+  anchors:{ home:{name:"Home",addr:"1729 Old Turnpike Rd"}, office:{name:"Office",addr:"Clearfield"} },
+  jobs:{}, places:["Lewistown","McClure","Port Matilda"], legs:{}, today:[], recents:[]
+};
+
+let S = load();
+let sheetState = null;
+
+function load(){
+  let s = structuredClone(DEFAULTS);
+  try{
+    const raw = JSON.parse(localStorage.getItem(LS_KEY));
+    if(raw){ s = Object.assign(s, raw);
+      s.anchors = Object.assign(structuredClone(DEFAULTS.anchors), raw.anchors||{}); }
+  }catch(e){}
+  // merge master job list in, keep learned places
+  s.jobs = s.jobs || {};
+  for(const j of JOBS){
+    if(s.jobs[j.name]) s.jobs[j.name] = Object.assign({place:""}, j, {place:s.jobs[j.name].place||""});
+    else s.jobs[j.name] = Object.assign({place:""}, j);
+  }
+  return s;
+}
+function save(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){} }
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmt = n => (Math.round(n*10)/10).toFixed(1);
+const legKey = (a,b) => a+"|"+b;
+const anchorName = () => S.anchors[S.anchor].name;
+const county = nm => nm.split(/[\s\d]/)[0];
+
+// ---- route from driving codes' places, consecutive dedup ----
+function placeSeq(){
+  const seq=[];
+  for(const nm of S.today){ const j=S.jobs[nm]; if(j&&j.drives&&j.place) seq.push(j.place); }
+  return seq;
+}
+function routeNodes(){
+  const raw=[anchorName(), ...placeSeq(), anchorName()];
+  const out=[]; for(const p of raw){ if(out[out.length-1]!==p) out.push(p); }
+  return out;
+}
+function compute(){
+  const r=routeNodes(); let total=0,unknown=0; const legs=[];
+  for(let i=0;i<r.length-1;i++){
+    const from=r[i],to=r[i+1];
+    const mi=S.legs[legKey(from,to)];
+    if(mi==null){legs.push({from,to,mi:null,known:false});unknown++;}
+    else{legs.push({from,to,mi,known:true});total+=mi;}
+  }
+  // unconfigured driving codes (no place set)
+  const needPlace=S.today.filter(nm=>{const j=S.jobs[nm];return j&&j.drives&&!j.place;}).length;
+  return {r,legs,total,unknown,needPlace};
+}
+
+function render(){
+  $("#today").textContent=new Date().toLocaleDateString(undefined,
+    {weekday:"short",month:"numeric",day:"numeric",year:"numeric"});
+
+  for(const k of ["home","office"]){
+    const el=document.querySelector(`[data-anchor="${k}"]`); const a=S.anchors[k];
+    el.classList.toggle("sel",S.anchor===k);
+    el.innerHTML=`<span class="k">${esc(a.name)}</span><span class="a">${esc(a.addr||"\u2014")}</span>`;
+  }
+
+  renderRecents();
+
+  // codes worked
+  const codes=$("#codes"); codes.innerHTML="";
+  if(S.today.length===0){
+    codes.innerHTML=`<div class="empty">No codes yet. Search a job above, or tap a recent one.</div>`;
+  } else {
+    S.today.forEach((nm,i)=>{
+      const j=S.jobs[nm]; if(!j) return;
+      let sub;
+      if(!j.drives) sub=`<span class="sub">Admin \u00b7 no miles</span>`;
+      else if(j.place) sub=`<span class="sub">at <b>${esc(j.place)}</b> \u00b7 tap to change</span>`;
+      else sub=`<span class="sub warn">tap to set the town \u2192 mileage</span>`;
+      const el=document.createElement("div"); el.className="code";
+      el.innerHTML=`
+        <div class="ord">
+          <button data-up="${i}" aria-label="up" ${i===0?"disabled":""}>\u25b2</button>
+          <button data-down="${i}" aria-label="down" ${i===S.today.length-1?"disabled":""}>\u25bc</button>
+        </div>
+        <div class="body" data-job="${i}"><div class="nm">${esc(nm)}</div>${sub}</div>
+        <button class="rm" data-rm="${i}" aria-label="remove">\u2715</button>`;
+      codes.appendChild(el);
+    });
+  }
+
+  // total + road
+  const {r,legs,total,unknown,needPlace}=compute();
+  $("#totalNum").textContent=fmt(total);
+  const flags=[];
+  if(needPlace) flags.push(`${needPlace} job${needPlace>1?"s":""} need a town set`);
+  if(unknown) flags.push(`${unknown} leg${unknown>1?"s":""} need miles \u2014 total is partial`);
+  $("#flag").textContent=flags.join(" \u00b7 ");
+
+  const road=$("#road"); road.innerHTML="";
+  if(placeSeq().length===0){
+    road.innerHTML=`<div class="empty" style="padding:2px">Route shows here once a job with a town is added.</div>`;
+  } else {
+    r.forEach((nm,i)=>{
+      const anchor=(i===0||i===r.length-1);
+      const n=document.createElement("div"); n.className="rnode"+(anchor?" anchor":"");
+      n.innerHTML=`<span class="dot"></span><span class="nm">${esc(nm)}</span>`;
+      road.appendChild(n);
+      if(i<r.length-1){
+        const lg=legs[i]; const leg=document.createElement("div");
+        leg.className="rleg "+(lg.known?"known":"unknown");
+        leg.innerHTML=lg.known
+          ? `<button data-leg="${i}"><span class="mi">${fmt(lg.mi)}</span> mi \u00b7 edit</button>`
+          : `<button data-leg="${i}"><span class="mi">\uff0b</span> set miles</button>`;
+        road.appendChild(leg);
+      }
+    });
+  }
+  save();
+}
+
+function renderRecents(){
+  const box=$("#recents"); box.innerHTML="";
+  const list=S.recents.filter(n=>S.jobs[n]).slice(0,8);
+  if(list.length===0){ box.innerHTML=`<span class="chip none">Recent jobs appear here</span>`; return; }
+  list.forEach(n=>{ const b=document.createElement("button"); b.className="chip";
+    b.textContent=n; b.dataset.add=n; box.appendChild(b); });
+}
+
+// ---- picker ----
+function renderPicker(q){
+  const pk=$("#picker"); const ql=q.trim().toLowerCase();
+  if(!ql){ pk.classList.remove("on"); pk.innerHTML=""; return; }
+  const matches=JOBS.filter(j=>j.name.toLowerCase().includes(ql));
+  if(matches.length===0){ pk.innerHTML=`<div class="presult"><span class="nm" style="color:var(--muted)">No match</span></div>`; pk.classList.add("on"); return; }
+  let html=""; let grp=null;
+  for(const j of matches){
+    const c=county(j.name);
+    if(c!==grp){ grp=c; html+=`<div class="pgroup">${esc(c)}</div>`; }
+    html+=`<div class="presult" data-add="${esc(j.name)}">
+      <span class="nm">${esc(j.name)}</span>
+      <span class="tag ${j.drives?"":"admin"}">${j.drives?"site":"admin"}</span></div>`;
+  }
+  pk.innerHTML=html; pk.classList.add("on");
+}
+
+// ---- actions ----
+function addJob(name){
+  if(!S.jobs[name]) return;
+  S.today.push(name);
+  S.recents=[name,...S.recents.filter(n=>n!==name)].slice(0,12);
+  $("#search").value=""; renderPicker("");
+  const j=S.jobs[name];
+  render();
+  if(j.drives && !j.place) openJob(S.today.length-1); // prompt town immediately
+}
+
+function toast(m){ const t=$("#toast"); t.textContent=m; t.classList.add("show");
+  clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove("show"),1500); }
+
+function openSheet(html){ $("#sheet").innerHTML=html; $("#scrim").classList.add("on"); }
+function closeSheet(){ $("#scrim").classList.remove("on"); sheetState=null; }
+
+// job detail + place picker
+function openJob(idx){
+  const nm=S.today[idx]; const j=S.jobs[nm]; if(!j) return;
+  sheetState={type:"job",idx,nm};
+  const kv=`<div class="kv">
+    Cost center <span class="mono">${esc(j.cc||"\u2014")}</span><br>
+    Rec order <span class="mono">${esc(j.ro||"\u2014")}</span> \u00b7 Fund <span class="mono">${esc(j.fund||"\u2014")}</span>
+    ${j.wbs?`<br>WBS <span class="mono">${esc(j.wbs)}</span>`:""}</div>`;
+  let placeUI="";
+  if(j.drives){
+    const chips=S.places.map(p=>`<button class="chip ${p===j.place?"sel":""}" data-pick="${esc(p)}">${esc(p)}</button>`).join("");
+    placeUI=`<p class="hint">Which town is this site in? Mileage routes through it. Same town as another job? Pick the same one \u2014 no extra miles.</p>
+      <div class="placepick">${chips||'<span class="chip none">No towns yet</span>'}</div>
+      <div class="newplace"><input id="npInput" placeholder="New town" autocapitalize="words"><button id="npAdd">Add</button></div>`;
+  } else {
+    placeUI=`<p class="hint">Admin code \u2014 no mileage. It still lists on your copied codes for the sheet.</p>`;
+  }
+  openSheet(`<h3>${esc(nm)}</h3>${kv}${placeUI}
+    <div class="acts">
+      <button class="btn-del" data-rmjob="${idx}">Remove</button>
+      <button class="btn-save" id="jobDone">Done</button>
+    </div>`);
+}
+
+// leg miles editor
+function openLeg(i){
+  const {r}=compute(); const from=r[i],to=r[i+1]; if(from===to) return;
+  sheetState={type:"leg",from,to};
+  const cur=S.legs[legKey(from,to)]; const rev=S.legs[legKey(to,from)];
+  openSheet(`<h3>Set leg distance</h3>
+    <p class="route-lbl">${esc(from)} \u2192 ${esc(to)}</p>
+    <p class="hint">Enter the miles Google Maps gives for the direct route. Saved once, reused every time \u2014 that's your audit number.</p>
+    <div class="milerow"><input id="legMiles" type="number" inputmode="decimal" step="0.1" min="0" placeholder="0.0" value="${cur!=null?cur:""}"><span class="unit">mi</span></div>
+    ${(rev!=null&&cur==null)?`<button class="revchip" id="revChip" data-v="${rev}">Reverse leg is ${fmt(rev)} mi \u2014 use it</button>`:""}
+    <div class="acts">
+      ${cur!=null?`<button class="btn-del" id="legClear">Clear</button>`:""}
+      <button class="btn-cancel" id="legCancel">Cancel</button>
+      <button class="btn-save" id="legSave">Save</button>
+    </div>`);
+  setTimeout(()=>{const el=$("#legMiles"); if(el) el.focus();},60);
+}
+
+function copyDay(){
+  const {r,legs,total,unknown,needPlace}=compute();
+  const d=new Date().toLocaleDateString(undefined,{weekday:"short",month:"numeric",day:"numeric",year:"numeric"});
+  let out=d+"\n";
+  out+=`Route: ${r.join(" \u2192 ")} \u2014 ${fmt(total)} mi`;
+  if(unknown||needPlace) out+=" (incomplete)";
+  out+="\nCodes worked:\n";
+  if(S.today.length===0) out+="  (none)\n";
+  for(const nm of S.today){ const j=S.jobs[nm]; if(!j) continue;
+    let line=`  ${nm}  CC ${j.cc}  RO ${j.ro}  Fund ${j.fund}`;
+    if(j.wbs) line+=`  WBS ${j.wbs}`;
+    if(j.drives&&j.place) line+=`  @ ${j.place}`;
+    out+=line+"\n";
+  }
+  const done=()=>toast("Copied");
+  if(navigator.clipboard&&navigator.clipboard.writeText)
+    navigator.clipboard.writeText(out).then(done).catch(()=>fb(out,done));
+  else fb(out,done);
+}
+function fb(t,cb){ const a=document.createElement("textarea"); a.value=t; a.style.position="fixed";
+  a.style.opacity="0"; document.body.appendChild(a); a.select();
+  try{document.execCommand("copy");cb();}catch(e){} a.remove(); }
+
+/* ---------------- events ---------------- */
+document.addEventListener("click",e=>{
+  const t=e.target.closest("button,[data-add],[data-job]"); if(!t) return;
+  const d=t.dataset;
+  if(d.anchor){ S.anchor=d.anchor; render(); return; }
+  if(d.add!=null){ addJob(d.add); return; }
+  if(d.job!=null){ openJob(+d.job); return; }
+  if(d.rm!=null){ S.today.splice(+d.rm,1); render(); return; }
+  if(d.up!=null){ const i=+d.up; [S.today[i-1],S.today[i]]=[S.today[i],S.today[i-1]]; render(); return; }
+  if(d.down!=null){ const i=+d.down; [S.today[i+1],S.today[i]]=[S.today[i],S.today[i+1]]; render(); return; }
+  if(d.leg!=null){ openLeg(+d.leg); return; }
+
+  // sheet: job
+  if(d.pick!=null){ const {nm}=sheetState; S.jobs[nm].place=d.pick; render(); openJob(sheetState.idx); return; }
+  if(t.id==="npAdd"){ const v=$("#npInput").value.trim(); if(v){ if(!S.places.includes(v)) S.places.push(v);
+      S.jobs[sheetState.nm].place=v; render(); openJob(sheetState.idx);} return; }
+  if(d.rmjob!=null){ S.today.splice(+d.rmjob,1); closeSheet(); render(); return; }
+  if(t.id==="jobDone"){ closeSheet(); render(); return; }
+
+  // sheet: leg
+  if(t.id==="revChip"){ $("#legMiles").value=d.v; $("#legMiles").focus(); return; }
+  if(t.id==="legSave"){ const v=parseFloat($("#legMiles").value);
+    if(isNaN(v)||v<0){toast("Enter miles");return;}
+    S.legs[legKey(sheetState.from,sheetState.to)]=Math.round(v*10)/10; closeSheet(); render(); toast("Saved"); return; }
+  if(t.id==="legClear"){ delete S.legs[legKey(sheetState.from,sheetState.to)]; closeSheet(); render(); return; }
+  if(t.id==="legCancel"){ closeSheet(); return; }
+});
+
+$("#search").addEventListener("input",e=>renderPicker(e.target.value));
+$("#copyBtn").addEventListener("click",copyDay);
+$("#clearDay").addEventListener("click",()=>{
+  if(S.today.length && !confirm("Clear today's codes? Saved towns, legs and places stay.")) return;
+  S.today=[]; render(); });
+$("#editAddr").addEventListener("click",()=>{
+  const h=prompt("Home address:",S.anchors.home.addr); if(h!=null)S.anchors.home.addr=h.trim();
+  const o=prompt("Office address:",S.anchors.office.addr); if(o!=null)S.anchors.office.addr=o.trim();
+  render(); });
+$("#manage").addEventListener("click",()=>{
+  if(!S.places.length){alert("No towns saved yet.");return;}
+  const list=S.places.map((p,i)=>`${i+1}. ${p}`).join("\n");
+  const ans=prompt("Saved towns:\n"+list+"\n\nType a number to delete it (jobs using it lose their town), or Cancel.","");
+  const n=parseInt(ans,10);
+  if(n>=1&&n<=S.places.length){ const rem=S.places.splice(n-1,1)[0];
+    for(const k in S.jobs) if(S.jobs[k].place===rem) S.jobs[k].place="";
+    toast("Removed "+rem); render(); } });
+$("#scrim").addEventListener("click",e=>{ if(e.target.id==="scrim") closeSheet(); });
+document.addEventListener("keydown",e=>{ if(e.key==="Escape"&&sheetState) closeSheet(); });
+
+render();
+</script>
+</body>
+</html>
