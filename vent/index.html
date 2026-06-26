@@ -202,8 +202,11 @@
     }
     .hist-clear:hover { color: var(--red); }
 
-    /* ── Today trend ── */
+    /* ── Today trend (one block per room) ── */
     #trend { display: none; margin-bottom: 14px; }
+    .trend-day { font-size: 10px; color: var(--accent); letter-spacing: .15em; text-transform: uppercase; font-weight: 600; margin-bottom: 10px; }
+    .trend-block { margin-bottom: 14px; }
+    .trend-block:last-child { margin-bottom: 0; }
     .trend-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
     .trend-title { font-size: 10px; color: var(--muted); letter-spacing: .12em; text-transform: uppercase; font-weight: 600; }
     .trend-legend { display: flex; gap: 10px; }
@@ -317,7 +320,7 @@
   const LS_LOG  = 'ventseal_log';    // saved reading history
   const LS_ZONES = 'ventseal_zones'; // indoor zones [{id,name,iTemp,iRH}]
   const LS_ZONE  = 'ventseal_zone';  // active zone id
-  const APP_VERSION = 'v1.8.0';      // shown in the footer; bump on each release
+  const APP_VERSION = 'v1.8.1';      // shown in the footer; bump on each release
   const BUILD_DATE  = '2026-06-21';  // YYYY-MM-DD; update alongside APP_VERSION
 
   // Snapshot of the current computed reading, used by the History log.
@@ -821,23 +824,10 @@
            ' ' + d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
   }
 
-  // Today's trend: a compact dual-line sparkline (outdoor vs indoor dew
-  // point) over today's logged readings, with the net change. Hidden until
-  // there are at least two readings today.
-  function renderTrend() {
-    const el = $('trend');
-    if (!el) return;
-    const zones = getZones() || [];
-    const zoneName = zones.length ? activeZone().name : null;
-    const multi = zones.length > 1;
-    const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
-    const today = getLog()
-      // Active room only; legacy entries (no zone) count toward any room.
-      .filter(e => e.t >= startOfDay.getTime() && (!zoneName || e.zone === zoneName || e.zone == null))
-      .sort((a, b) => a.t - b.t);   // oldest → newest
-
-    if (today.length < 2) { el.style.display = 'none'; el.innerHTML = ''; return; }
-
+  // One compact dual-line sparkline (outdoor vs indoor dew point) for a single
+  // room's set of today's readings, with the net change. `today` must be
+  // sorted oldest → newest and have ≥2 points.
+  function trendBlock(name, today) {
     const W = 300, H = 90, padX = 10, padTop = 10, padBot = 16;
     const ts = today.map(e => e.t);
     const minT = Math.min(...ts), maxT = Math.max(...ts);
@@ -863,23 +853,49 @@
     };
     const first = today[0], last = today[today.length - 1];
 
-    el.style.display = 'block';
-    el.innerHTML = `
-      <div class="trend-head">
-        <span class="trend-title">Today${multi ? ' · ' + esc(zoneName) : ''}</span>
-        <span class="trend-legend">
-          <span class="trend-key" style="color:${AC}">● Out</span>
-          <span class="trend-key" style="color:${TX}">● In</span>
-        </span>
-      </div>
-      <svg class="trend-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Dew point trend for today">
-        ${series('oDP', AC)}
-        ${series('iDP', TX)}
-      </svg>
-      <div class="trend-foot">
-        <span>${fmtT(minT)} → ${fmtT(maxT)}</span>
-        <span>Out ${delta(first.oDP, last.oDP)} · In ${delta(first.iDP, last.iDP)}</span>
+    return `
+      <div class="trend-block">
+        <div class="trend-head">
+          <span class="trend-title">${esc(name)}</span>
+          <span class="trend-legend">
+            <span class="trend-key" style="color:${AC}">● Out</span>
+            <span class="trend-key" style="color:${TX}">● In</span>
+          </span>
+        </div>
+        <svg class="trend-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Dew point trend for ${esc(name)} today">
+          ${series('oDP', AC)}
+          ${series('iDP', TX)}
+        </svg>
+        <div class="trend-foot">
+          <span>${fmtT(minT)} → ${fmtT(maxT)}</span>
+          <span>Out ${delta(first.oDP, last.oDP)} · In ${delta(first.iDP, last.iDP)}</span>
+        </div>
       </div>`;
+  }
+
+  // Today's trends, tracked SEPARATELY per room — one sparkline per room that
+  // has ≥2 readings today, in the room order shown in the chips.
+  function renderTrend() {
+    const el = $('trend');
+    if (!el) return;
+    const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+    const todays = getLog().filter(e => e.t >= startOfDay.getTime() && e.zone);
+
+    const byZone = {};
+    todays.forEach(e => { (byZone[e.zone] = byZone[e.zone] || []).push(e); });
+
+    // Order: rooms as they appear in the chips, then any leftover names.
+    const order = [];
+    (getZones() || []).forEach(z => { if (byZone[z.name]) order.push(z.name); });
+    Object.keys(byZone).forEach(n => { if (!order.includes(n)) order.push(n); });
+
+    const blocks = order
+      .filter(n => byZone[n].length >= 2)
+      .map(n => trendBlock(n, byZone[n].slice().sort((a, b) => a.t - b.t)));
+
+    if (!blocks.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    el.style.display = 'block';
+    el.innerHTML = `<div class="trend-day">Today</div>` + blocks.join('');
   }
 
   // Minimal HTML escape for any user/API-sourced text (e.g. place names).
