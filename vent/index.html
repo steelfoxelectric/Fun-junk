@@ -73,6 +73,20 @@
     }
     .section-label { font-size: 10px; color: var(--accent); letter-spacing: .15em; text-transform: uppercase; font-weight: 600; }
 
+    /* ── Indoor zones (rooms) ── */
+    .zone-chips { display: flex; gap: 6px; overflow-x: auto; flex: 1; min-width: 0; padding-bottom: 2px; scrollbar-width: none; }
+    .zone-chips::-webkit-scrollbar { display: none; }
+    .zone-chip {
+      background: var(--bg); border: 1px solid var(--border); color: var(--muted);
+      border-radius: 999px; padding: 4px 11px; font-size: 11px; font-family: var(--sans);
+      cursor: pointer; white-space: nowrap; flex-shrink: 0; letter-spacing: .03em;
+    }
+    .zone-chip.active { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+    .zone-add { color: var(--muted); font-weight: 700; padding: 4px 10px; }
+    .zone-actions { display: flex; gap: 10px; flex-shrink: 0; margin-left: 8px; }
+    .zone-act { color: var(--muted); cursor: pointer; font-size: 13px; line-height: 1; }
+    .zone-act:active { color: var(--accent); }
+
     /* ── Location setup ── */
     .loc-row { display: flex; gap: 6px; align-items: center; }
     .loc-input {
@@ -247,7 +261,11 @@
   <!-- INDOOR — bottom -->
   <div class="section">
     <div class="section-header">
-      <span class="section-label">Indoor</span>
+      <div class="zone-chips" id="zone-chips"></div>
+      <div class="zone-actions">
+        <span class="zone-act" onclick="renameZone()" title="rename zone" aria-label="rename zone">✎</span>
+        <span class="zone-act" id="zone-del" onclick="deleteZone()" title="delete zone" aria-label="delete zone" style="display:none">🗑</span>
+      </div>
     </div>
     <div class="inputs">
       <div class="input-group">
@@ -297,7 +315,9 @@
   const LS_KEY  = 'ventseal_home';   // saved location
   const LS_LAST = 'ventseal_last';   // last fetched outdoor reading (for offline)
   const LS_LOG  = 'ventseal_log';    // saved reading history
-  const APP_VERSION = 'v1.7.3';      // shown in the footer; bump on each release
+  const LS_ZONES = 'ventseal_zones'; // indoor zones [{id,name,iTemp,iRH}]
+  const LS_ZONE  = 'ventseal_zone';  // active zone id
+  const APP_VERSION = 'v1.8.0';      // shown in the footer; bump on each release
   const BUILD_DATE  = '2026-06-21';  // YYYY-MM-DD; update alongside APP_VERSION
 
   // Snapshot of the current computed reading, used by the History log.
@@ -392,12 +412,10 @@
         : 'Set your home location above, then enter indoor temp + humidity.';
       v.innerHTML=`<div class="verdict-placeholder">${hint}</div>`;
       current = { oDP:null, iDP:null, label:null, color:null };
-      scheduleAutoLog();
       return;
     }
     const { label, sub, color } = verdictFor(oDP, iDP);
     current = { oDP, iDP, label, color };
-    scheduleAutoLog();
 
     v.style.cssText=`border:1px solid ${color}55;background:${color}12`;
     v.innerHTML=`
@@ -562,6 +580,7 @@
       setLast({ temp, rh, time, dp: apiDP });
 
       render();
+      scheduleAutoLog();   // a live fetch is a real reading worth logging
       setTimeout(() => jump(fields.inTemp), 100);
 
     } catch {
@@ -603,6 +622,8 @@
       const go = done(v, pLen[key]);
       pLen[key] = v.length;
       render();
+      if (key === 'inTemp' || key === 'inRH') persistActiveZone();   // remember this room's reading
+      scheduleAutoLog();   // user-entered reading
       if (go && next) setTimeout(() => jump(next), 30);
     });
   }
@@ -613,11 +634,116 @@
     Object.keys(pLen).forEach(k => pLen[k] = 0);
     clearLast();
     apiOutdoor = null;
+    persistActiveZone();   // clear the active room's stored reading too
     const loc = getSaved();
     if (loc) $('out-lbl').textContent = `Outdoor · ${loc.name}`;
     render();
     const fb = $('fetch-btn');
     if (fb) fb.focus(); else setTimeout(() => jump(fields.outTemp), 50);
+  }
+
+  // ── Indoor zones (rooms) ─────────────────────────────────────────────
+  function zid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+  function getZones() {
+    try { const z = JSON.parse(localStorage.getItem(LS_ZONES)); if (Array.isArray(z) && z.length) return z; } catch {}
+    return null;
+  }
+  function setZones(z) { try { localStorage.setItem(LS_ZONES, JSON.stringify(z)); } catch {} }
+  function getActiveZoneId() { try { return localStorage.getItem(LS_ZONE); } catch { return null; } }
+  function setActiveZoneId(id) { try { localStorage.setItem(LS_ZONE, id); } catch {} }
+
+  // Always returns a non-empty zones array, seeding a default the first time.
+  function ensureZones() {
+    let zones = getZones();
+    if (!zones) {
+      zones = [{ id: zid(), name: 'Indoor', iTemp: '', iRH: '' }];
+      setZones(zones);
+      setActiveZoneId(zones[0].id);
+    }
+    return zones;
+  }
+  function activeZone() {
+    const zones = ensureZones();
+    let z = zones.find(x => x.id === getActiveZoneId());
+    if (!z) { z = zones[0]; setActiveZoneId(z.id); }
+    return z;
+  }
+
+  // Save the indoor fields into the active zone.
+  function persistActiveZone() {
+    const zones = ensureZones();
+    const z = zones.find(x => x.id === getActiveZoneId());
+    if (!z) return;
+    z.iTemp = fields.inTemp.value;
+    z.iRH   = fields.inRH.value;
+    setZones(zones);
+  }
+  // Load the active zone's stored indoor values into the fields.
+  function loadActiveZone() {
+    const z = activeZone();
+    fields.inTemp.value = z.iTemp || ''; pLen.inTemp = String(z.iTemp || '').length;
+    fields.inRH.value   = z.iRH   || ''; pLen.inRH   = String(z.iRH   || '').length;
+  }
+
+  function renderZones() {
+    const el = $('zone-chips');
+    if (!el) return;
+    const zones = ensureZones();
+    const activeId = activeZone().id;
+    el.innerHTML = zones.map(z =>
+      `<button class="zone-chip${z.id === activeId ? ' active' : ''}" onclick="switchZone('${z.id}')">${esc(z.name)}</button>`
+    ).join('') + `<button class="zone-chip zone-add" onclick="addZone()" aria-label="add zone">+</button>`;
+    const del = $('zone-del');
+    if (del) del.style.display = zones.length > 1 ? 'inline' : 'none';
+  }
+
+  function switchZone(id) {
+    if (id === getActiveZoneId()) return;
+    persistActiveZone();
+    setActiveZoneId(id);
+    loadActiveZone();
+    renderZones();
+    render();        // recompute verdict for the newly active room (no auto-log)
+    renderLog();     // trend follows the active zone
+  }
+
+  function addZone() {
+    const name = (prompt('New room name (e.g. Upstairs)') || '').trim();
+    if (!name) return;
+    persistActiveZone();
+    const zones = ensureZones();
+    const z = { id: zid(), name, iTemp: '', iRH: '' };
+    zones.push(z);
+    setZones(zones);
+    setActiveZoneId(z.id);
+    loadActiveZone();
+    renderZones();
+    render();
+    renderLog();
+  }
+
+  function renameZone() {
+    const z = activeZone();
+    const name = (prompt('Rename room', z.name) || '').trim();
+    if (!name || name === z.name) return;
+    const zones = ensureZones();
+    const t = zones.find(x => x.id === z.id);
+    if (t) { t.name = name; setZones(zones); renderZones(); render(); renderLog(); }
+  }
+
+  function deleteZone() {
+    const zones = ensureZones();
+    if (zones.length <= 1) return;            // keep at least one room
+    const z = activeZone();
+    if (!confirm(`Delete room "${z.name}"? Its saved history stays.`)) return;
+    const idx = zones.findIndex(x => x.id === z.id);
+    zones.splice(idx, 1);
+    setZones(zones);
+    setActiveZoneId(zones[Math.max(0, idx - 1)].id);
+    loadActiveZone();
+    renderZones();
+    render();
+    renderLog();
   }
 
   // ── History log ──────────────────────────────────────────────────────
@@ -645,27 +771,32 @@
     if (current.oDP === null || current.iDP === null) return;
     const loc = getSaved();
     const place = loc ? loc.name : '';
+    const zone = activeZone().name;
     const oDP = +current.oDP.toFixed(1);
     const iDP = +current.iDP.toFixed(1);
     const now = Date.now();
     const log = getLog();
-    const top = log[0];
 
     const entry = {
       id: now + '-' + Math.random().toString(36).slice(2, 7),
       t: now,
       label: current.label,
       color: current.color,
-      oDP, iDP, place,
+      oDP, iDP, place, zone,
       // Raw inputs behind the reading, for the expandable detail view.
       oT: fields.outTemp.value, oH: fields.outRH.value,
       iT: fields.inTemp.value,  iH: fields.inRH.value
     };
 
-    if (top && top.place === place && (now - top.t) < COALESCE_MS) {
-      // Same recent check — nothing to do if unchanged, else update in place.
-      if (top.oDP === oDP && top.iDP === iDP) return;
-      log[0] = entry;
+    // Coalesce with the most recent reading for THIS place + room if it's
+    // within the window (so fine-tuning one room doesn't spawn duplicates,
+    // while a different room always gets its own row).
+    const i = log.findIndex(e => e.place === place && (e.zone || '') === zone);
+    const recent = i >= 0 ? log[i] : null;
+    if (recent && (now - recent.t) < COALESCE_MS) {
+      if (recent.oDP === oDP && recent.iDP === iDP) return;   // unchanged
+      log.splice(i, 1);          // pull it out and re-add at top with new values
+      log.unshift(entry);
     } else {
       log.unshift(entry);
     }
@@ -696,9 +827,13 @@
   function renderTrend() {
     const el = $('trend');
     if (!el) return;
+    const zones = getZones() || [];
+    const zoneName = zones.length ? activeZone().name : null;
+    const multi = zones.length > 1;
     const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
     const today = getLog()
-      .filter(e => e.t >= startOfDay.getTime())
+      // Active room only; legacy entries (no zone) count toward any room.
+      .filter(e => e.t >= startOfDay.getTime() && (!zoneName || e.zone === zoneName || e.zone == null))
       .sort((a, b) => a.t - b.t);   // oldest → newest
 
     if (today.length < 2) { el.style.display = 'none'; el.innerHTML = ''; return; }
@@ -731,7 +866,7 @@
     el.style.display = 'block';
     el.innerHTML = `
       <div class="trend-head">
-        <span class="trend-title">Today</span>
+        <span class="trend-title">Today${multi ? ' · ' + esc(zoneName) : ''}</span>
         <span class="trend-legend">
           <span class="trend-key" style="color:${AC}">● Out</span>
           <span class="trend-key" style="color:${TX}">● In</span>
@@ -756,15 +891,16 @@
   // Expanded detail for one entry: the full breakdown behind the reading.
   function logDetailHTML(e) {
     const rows = [];
-    const zone = (lbl, t, h, dp) => {
+    const seg = (lbl, t, h, dp) => {
       const parts = [];
       if (t != null && t !== '') parts.push(`${esc(t)}°F`);
       if (h != null && h !== '') parts.push(`${esc(h)}% RH`);
       const lhs = parts.length ? parts.join(' · ') + ' → ' : '';
       return `<div class="dl-row"><span class="dl-k">${lbl}</span><span class="dl-v">${lhs}${dp}° dp</span></div>`;
     };
-    rows.push(zone('Outdoor', e.oT, e.oH, e.oDP));
-    rows.push(zone('Indoor',  e.iT, e.iH, e.iDP));
+    if (e.zone) rows.push(`<div class="dl-row"><span class="dl-k">Room</span><span class="dl-v">${esc(e.zone)}</span></div>`);
+    rows.push(seg('Outdoor', e.oT, e.oH, e.oDP));
+    rows.push(seg('Indoor',  e.iT, e.iH, e.iDP));
     const d = +(e.oDP - e.iDP).toFixed(1);
     const diff = d === 0 ? 'equal'
       : d < 0 ? `outdoor ${Math.abs(d).toFixed(1)}° drier`
@@ -798,13 +934,14 @@
       return;
     }
     clear.style.display = 'block';
+    const multiZone = (getZones() || []).length > 1;
     list.innerHTML = log.map(e => {
       const open = e.id === expandedLogId;
       return `
       <div class="hist-row${open ? ' expanded' : ''}">
         <div class="hist-main" onclick="toggleLogDetail('${e.id}')">
           <span class="hist-label" style="color:${e.color || TX}">${e.label || ''}</span>
-          <span class="hist-date">${fmtLogDate(e.t)}</span>
+          <span class="hist-date">${fmtLogDate(e.t)}${multiZone && e.zone ? ' · ' + esc(e.zone) : ''}</span>
           <span class="hist-vals">Out ${e.oDP}° / In ${e.iDP}°${e.place ? ' · ' + esc(e.place) : ''}</span>
           ${open ? logDetailHTML(e) : ''}
         </div>
@@ -827,7 +964,10 @@
     $('app-version').textContent = `${APP_VERSION} · ${built}`;
     renderControls();
     restoreLast();
-    render();
+    ensureZones();
+    loadActiveZone();   // restore the active room's indoor reading
+    renderZones();
+    render();           // compute verdict from restored values (no auto-log on load)
     renderLog();
   });
 </script>
