@@ -320,7 +320,7 @@
   const LS_LOG  = 'ventseal_log';    // saved reading history
   const LS_ZONES = 'ventseal_zones'; // indoor zones [{id,name,iTemp,iRH}]
   const LS_ZONE  = 'ventseal_zone';  // active zone id
-  const APP_VERSION = 'v1.8.1';      // shown in the footer; bump on each release
+  const APP_VERSION = 'v1.8.2';      // shown in the footer; bump on each release
   const BUILD_DATE  = '2026-06-21';  // YYYY-MM-DD; update alongside APP_VERSION
 
   // Snapshot of the current computed reading, used by the History log.
@@ -727,18 +727,30 @@
 
   function renameZone() {
     const z = activeZone();
-    const name = (prompt('Rename room', z.name) || '').trim();
-    if (!name || name === z.name) return;
+    const oldName = z.name;
+    const name = (prompt('Rename room', oldName) || '').trim();
+    if (!name || name === oldName) return;
     const zones = ensureZones();
     const t = zones.find(x => x.id === z.id);
-    if (t) { t.name = name; setZones(zones); renderZones(); render(); renderLog(); }
+    if (!t) return;
+    t.name = name; setZones(zones);
+    // Carry this room's existing readings over to the new name.
+    const log = getLog();
+    let changed = false;
+    log.forEach(e => { if (e.zone === oldName) { e.zone = name; changed = true; } });
+    if (changed) setLog(log);
+    renderZones(); render(); renderLog();
   }
 
   function deleteZone() {
     const zones = ensureZones();
     if (zones.length <= 1) return;            // keep at least one room
     const z = activeZone();
-    if (!confirm(`Delete room "${z.name}"? Its saved history stays.`)) return;
+    const n = getLog().filter(e => e.zone === z.name).length;
+    const msg = n ? `Delete room "${z.name}" and its ${n} saved reading${n === 1 ? '' : 's'}?`
+                  : `Delete room "${z.name}"?`;
+    if (!confirm(msg)) return;
+    if (n) setLog(getLog().filter(e => e.zone !== z.name));   // remove this room's readings
     const idx = zones.findIndex(x => x.id === z.id);
     zones.splice(idx, 1);
     setZones(zones);
@@ -755,6 +767,15 @@
   }
   function setLog(arr) {
     try { localStorage.setItem(LS_LOG, JSON.stringify(arr)); } catch {}
+  }
+
+  // The room a stored reading belongs to. Untagged legacy readings (logged
+  // before rooms existed) fall under the first room — so all early history
+  // shows under the first tab.
+  function entryRoom(e) {
+    if (e.zone) return e.zone;
+    const zones = getZones() || [];
+    return zones.length ? zones[0].name : '';
   }
 
   // Auto-log: once a complete reading settles (debounced), save it. The
@@ -814,7 +835,9 @@
   }
 
   function clearLog() {
-    setLog([]);
+    // Clear only the active room's readings (other rooms keep theirs).
+    const active = activeZone().name;
+    setLog(getLog().filter(e => entryRoom(e) !== active));
     renderLog();
   }
 
@@ -879,10 +902,10 @@
     const el = $('trend');
     if (!el) return;
     const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
-    const todays = getLog().filter(e => e.t >= startOfDay.getTime() && e.zone);
+    const todays = getLog().filter(e => e.t >= startOfDay.getTime());
 
     const byZone = {};
-    todays.forEach(e => { (byZone[e.zone] = byZone[e.zone] || []).push(e); });
+    todays.forEach(e => { const r = entryRoom(e); (byZone[r] = byZone[r] || []).push(e); });
 
     // Order: rooms as they appear in the chips, then any leftover names.
     const order = [];
@@ -939,25 +962,27 @@
   }
 
   function renderLog() {
-    const log = getLog();
     const list = $('hist-list');
     const clear = $('hist-clear');
     if (!list) return;
     renderTrend();
-    if (!log.length) {
-      list.innerHTML = '<div class="hist-empty">No saved readings yet.</div>';
+    // Only the active room's readings (legacy untagged ones show under the
+    // first room via entryRoom).
+    const active = activeZone().name;
+    const rows = getLog().filter(e => entryRoom(e) === active);
+    if (!rows.length) {
+      list.innerHTML = '<div class="hist-empty">No saved readings for this room yet.</div>';
       clear.style.display = 'none';
       return;
     }
     clear.style.display = 'block';
-    const multiZone = (getZones() || []).length > 1;
-    list.innerHTML = log.map(e => {
+    list.innerHTML = rows.map(e => {
       const open = e.id === expandedLogId;
       return `
       <div class="hist-row${open ? ' expanded' : ''}">
         <div class="hist-main" onclick="toggleLogDetail('${e.id}')">
           <span class="hist-label" style="color:${e.color || TX}">${e.label || ''}</span>
-          <span class="hist-date">${fmtLogDate(e.t)}${multiZone && e.zone ? ' · ' + esc(e.zone) : ''}</span>
+          <span class="hist-date">${fmtLogDate(e.t)}</span>
           <span class="hist-vals">Out ${e.oDP}° / In ${e.iDP}°${e.place ? ' · ' + esc(e.place) : ''}</span>
           ${open ? logDetailHTML(e) : ''}
         </div>
